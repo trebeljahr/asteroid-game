@@ -7,6 +7,7 @@
   },
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/generate-seo.mjs",
     "build": "vite build",
     "preview": "vite preview --host",
     "check": "tsc --noEmit"
