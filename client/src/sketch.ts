@@ -20,12 +20,42 @@ const ASTEROID_TEXTURE_SIZE = 512;
 const VIEWPORT_RESIZE_SETTLE_DELAY_MS = 140;
 const appBootStartedAt = performance.now();
 
+type GraphicsWithInternals = p5.Graphics & {
+  elt?: HTMLCanvasElement;
+  _events?: Record<string, EventListenerOrEventListenerObject>;
+  _pInst?: {
+    _elements?: unknown[];
+  };
+};
+
+const releaseGraphicsBuffer = (graphics: p5.Graphics) => {
+  const target = graphics as GraphicsWithInternals;
+  const element = target.elt;
+
+  if (element) {
+    for (const [eventName, listener] of Object.entries(target._events ?? {})) {
+      element.removeEventListener(eventName, listener);
+    }
+    element.remove();
+  }
+
+  const elements = target._pInst?._elements;
+  if (Array.isArray(elements)) {
+    const index = elements.indexOf(graphics);
+    if (index !== -1) {
+      elements.splice(index, 1);
+    }
+  }
+};
+
 const rasterizeImageAsset = (p: p5, source: Image, size: number) => {
   const graphics = p.createGraphics(size, size);
   graphics.clear();
   graphics.imageMode(graphics.CENTER);
   graphics.image(source, size / 2, size / 2, size, size);
-  return graphics.get();
+  const rasterized = graphics.get();
+  releaseGraphicsBuffer(graphics);
+  return rasterized;
 };
 
 const sketch = (p: p5) => {
