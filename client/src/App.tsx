@@ -10,6 +10,7 @@ import {
 } from "./account";
 import { playSound } from "./audio";
 import { isCollisionDebugAvailable } from "./collisionDebug";
+import { DONATE_URL } from "./donation";
 import { isFullscreenActive, isFullscreenAvailable, toggleFullscreenMode } from "./fullscreen";
 import { activateGameMode, restartCurrentMode } from "./gameModeActions";
 import { type GameState, gameStateMachine } from "./gameState";
@@ -362,6 +363,14 @@ const MainMenuPanel: React.FC<{ state: GameState }> = ({ state }) => {
         />
         <ActionButton label="Achievements" onClick={openAchievementsMenu} variant="ghost" />
         <ActionButton label="Options" onClick={openOptionsMenu} variant="ghost" />
+      </div>
+
+      <div className="creditsSection">
+        <p className="creditsLine">
+          <a href={DONATE_URL} target="_blank" rel="noopener noreferrer">
+            Donate
+          </a>
+        </p>
       </div>
     </section>
   );
