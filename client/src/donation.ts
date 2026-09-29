@@ -1,4 +1,4 @@
-export const DONATE_URL = "https://ricos.site/donate?from=asteroids";
+export const DONATE_URL = "https://ricos.site/donate/asteroids";
 
 const SUPPORTED_PARAM = "supported";
 const SUPPORTED_AT_KEY = "donation-supported-at";

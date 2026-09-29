@@ -25,6 +25,7 @@ import {
   toggleNetcodeDebug,
   toggleSoundEnabled,
 } from "./gameUiActions";
+import { ProjectDonateLink } from "./ProjectDonateLink";
 import { formatRunDuration } from "./runSession";
 import { getStats, type PersistentStats, subscribeToStats } from "./stats";
 
@@ -367,9 +368,9 @@ const MainMenuPanel: React.FC<{ state: GameState }> = ({ state }) => {
 
       <div className="creditsSection">
         <p className="creditsLine">
-          <a href={DONATE_URL} target="_blank" rel="noopener noreferrer">
+          <ProjectDonateLink href={DONATE_URL} target="_blank" rel="noopener noreferrer">
             Donate
-          </a>
+          </ProjectDonateLink>
         </p>
       </div>
     </section>
