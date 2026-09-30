@@ -60,3 +60,9 @@ venv/
 .env.test
 .envrc.local
 .vercel/
+
+# hatchkit: secret files (NEVER commit)
+.env.keys
+
+# Commit encrypted configuration; private .env.keys stays ignored.
+!/.env.production
