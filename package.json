@@ -18,6 +18,7 @@
     "build:client": "pnpm --filter @simple-asteroid-game/client build",
     "build:server": "pnpm --filter @simple-asteroid-game/server build",
     "check": "pnpm --filter @simple-asteroid-game/shared check && pnpm --filter @simple-asteroid-game/client check && pnpm --filter @simple-asteroid-game/server check",
+    "test:runtime-security": "node --test scripts/runtime-security.test.cjs",
     "tools:extract-shapes": "tsx scripts/extract-ship-shapes.ts",
     "format": "biome format --write .",
     "lint": "biome lint .",
