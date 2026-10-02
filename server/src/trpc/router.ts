@@ -41,7 +41,7 @@ interface MultiplayerController {
   enqueueSocketById(
     socketId: string,
     shipVariant: ShipVariant,
-  ): { enqueued: false; reason: "already-matched" | "socket-not-found" } | { enqueued: true };
+  ): { enqueued: false; reason: "already-matched" | "socket-not-found" | "server-draining" } | { enqueued: true };
   getRuntimeConfig(): MultiplayerRuntimeConfig;
   leaveSocketById(
     socketId: string,
@@ -55,7 +55,7 @@ interface BattleRoyaleController {
   ):
     | {
         enqueued: false;
-        reason: "already-in-match" | "socket-not-found" | "lobby-full";
+        reason: "already-in-match" | "socket-not-found" | "lobby-full" | "server-draining";
       }
     | { enqueued: true };
   leave(

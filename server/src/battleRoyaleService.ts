@@ -112,6 +112,7 @@ const LOBBY_ROOM_ID = "battle-royale:lobby";
 const SNAPSHOT_INTERVAL_TICKS = 2;
 
 export class BattleRoyaleService {
+  private draining = false;
   private io: Server<ClientToServerEvents, ServerToClientEvents>;
   private lobby: BattleRoyaleLobbyPlayer[] = [];
   private lobbyTimerStartedAt: number | null = null;
@@ -148,6 +149,7 @@ export class BattleRoyaleService {
   }
 
   enqueue(socketId: string, shipVariant: ShipVariant) {
+    if (this.draining) return { enqueued: false as const, reason: "server-draining" as const };
     const socket = this.findSocket(socketId);
     if (socket === null) {
       return { enqueued: false as const, reason: "socket-not-found" as const };
@@ -242,6 +244,16 @@ export class BattleRoyaleService {
 
   handleDisconnect(socketId: string) {
     this.leave(socketId);
+  }
+
+  beginDrain() {
+    this.draining = true;
+    this.lobby = [];
+    this.lobbyTimerStartedAt = null;
+    for (const match of Array.from(this.matches.values())) {
+      this.finishMatch(match, { reason: "server-restart", winnerId: null });
+    }
+    this.broadcastLobbyStatus();
   }
 
   private findSocket(socketId: string): TypedSocket | null {
@@ -828,7 +840,7 @@ export class BattleRoyaleService {
       participant.socket.emit("br:match-ended", payload);
     }
 
-    if (options.reason !== "inactive") {
+    if (options.reason !== "inactive" && options.reason !== "server-restart") {
       this.dispatchMatchEndAchievements(match, options.winnerId);
     }
   }

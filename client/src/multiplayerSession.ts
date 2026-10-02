@@ -172,6 +172,13 @@ const getResultCopy = (
     };
   }
 
+  if (reason === "server-restart") {
+    return {
+      subtitle: "The server restarted. This round did not count. Queue again for a new match.",
+      title: "Match interrupted",
+    };
+  }
+
   if (reason === "inactive") {
     return {
       subtitle:
@@ -645,6 +652,9 @@ class MultiplayerClientSession {
       if (payload.youWon) {
         title = "Victory Royale";
         subtitle = "Last ship standing. The arena is yours.";
+      } else if (payload.reason === "server-restart") {
+        title = "Match interrupted";
+        subtitle = "The server restarted. This round did not count. Queue again for a new match.";
       } else if (payload.reason === "inactive") {
         title = "Match closed";
         subtitle =
@@ -657,7 +667,9 @@ class MultiplayerClientSession {
         subtitle = "The last ship standing claimed the match. Queue again for another try.";
       }
 
-      recordMultiplayerResult(payload.youWon ? "win" : "loss");
+      if (payload.reason !== "server-restart") {
+        recordMultiplayerResult(payload.youWon ? "win" : "loss");
+      }
       this.resetViewState();
       showMultiplayerResult(title, subtitle);
     });
@@ -764,7 +776,7 @@ class MultiplayerClientSession {
       }
 
       const resultCopy = getResultCopy(payload.outcome, payload.reason);
-      recordMultiplayerResult(payload.outcome);
+      if (payload.reason !== "server-restart") recordMultiplayerResult(payload.outcome);
       clearShipInput();
 
       if (payload.reason === "destroyed") {

@@ -1,4 +1,4 @@
-export type MatchEndReason = "destroyed" | "inactive" | "opponent-left";
+export type MatchEndReason = "destroyed" | "inactive" | "opponent-left" | "server-restart";
 export type MatchOutcome = "draw" | "loss" | "win";
 export type MatchPhase = "active" | "countdown";
 export type PlayerSlot = "alpha" | "beta";

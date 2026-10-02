@@ -92,7 +92,7 @@ export interface BattleRoyaleSnapshotPayload {
 
 export interface BattleRoyaleMatchEndedPayload {
   matchId: string;
-  reason: "eliminated" | "inactive" | "winner";
+  reason: "eliminated" | "inactive" | "winner" | "server-restart";
   winnerId: string | null;
   youWon: boolean;
 }

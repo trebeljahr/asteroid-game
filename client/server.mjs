@@ -41,6 +41,7 @@ const backendUrl = new URL(backendTarget);
 const isHttps = backendUrl.protocol === "https:";
 const makeRequest = isHttps ? httpsRequest : httpRequest;
 const distDir = resolve("./dist");
+let draining = false;
 
 function serveStaticFile(res, pathname) {
   let decodedPath;
@@ -170,8 +171,8 @@ const httpServer = createServer((req, res) => {
   }
 
   if (pathname === "/health" || pathname === "/healthz") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ok: true }));
+    res.writeHead(draining ? 503 : 200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: !draining }));
     return;
   }
 
@@ -202,4 +203,13 @@ httpServer.on("upgrade", (req, socket, head) => {
 
 httpServer.listen(port, () => {
   console.log(`> Client ready on http://localhost:${port} (backend: ${backendTarget})`);
+});
+
+process.on("SIGTERM", () => {
+  if (draining) return;
+  draining = true;
+  setTimeout(() => {
+    httpServer.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 5000).unref();
+  }, 20_000);
 });

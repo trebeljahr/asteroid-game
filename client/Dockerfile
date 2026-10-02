@@ -17,6 +17,8 @@ RUN pnpm run build:client
 FROM node:24-bookworm-slim AS runtime
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /app/client/dist ./dist
 COPY --from=build /app/client/server.mjs ./server.mjs
 COPY --from=build /app/client/package*.json ./

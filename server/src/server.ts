@@ -16,6 +16,7 @@ import { createAppRouter, createTRPCContext } from "./trpc/router";
 
 const app = express();
 const httpServer = createServer(app);
+let draining = false;
 const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
   cors: {
     origin: true,
@@ -53,6 +54,7 @@ app.use(
 );
 
 app.get("/health", (_request, response) => {
+  if (draining) return response.status(503).json({ ok: false });
   response.json({ ok: true });
 });
 
@@ -71,6 +73,10 @@ if (existsSync(clientDistPath)) {
 }
 
 io.use(async (socket, next) => {
+  if (draining) {
+    next(new Error("Server restarting; reconnect shortly"));
+    return;
+  }
   const token = extractDeviceToken(socket.handshake.auth?.deviceToken);
   if (token === null) {
     // Allow anonymous connections — they simply won't earn achievements.
@@ -121,6 +127,18 @@ function extractDeviceToken(raw: unknown): string | null {
 }
 
 const port = Number(process.env.PORT ?? 9777);
+
+process.on("SIGTERM", () => {
+  if (draining) return;
+  draining = true;
+  multiplayerService.beginDrain();
+  battleRoyaleService.beginDrain();
+  // Coolify needs time to remove this instance from proxy routing.
+  setTimeout(() => {
+    io.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 5000).unref();
+  }, 20_000);
+});
 
 const start = async () => {
   if (process.env.DATABASE_URL) {

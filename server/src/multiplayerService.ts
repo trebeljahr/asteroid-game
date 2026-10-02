@@ -104,6 +104,7 @@ const getOutcomeForPlayer = (playerId: string, winnerId: string | null): MatchOu
 };
 
 export class MultiplayerService {
+  private draining = false;
   private ammoCounter = 0;
   private asteroidCounter = 0;
   private bulletCounter = 0;
@@ -125,6 +126,7 @@ export class MultiplayerService {
   }
 
   enqueueSocketById(socketId: string, shipVariant: ShipVariant) {
+    if (this.draining) return { enqueued: false as const, reason: "server-draining" as const };
     const socket = this.sockets.get(socketId);
     if (socket === undefined) {
       return { enqueued: false, reason: "socket-not-found" as const };
@@ -149,6 +151,15 @@ export class MultiplayerService {
       serverAuthorityMode: "authoritative",
       worldSyncMode: "seed-plus-events",
     };
+  }
+
+  beginDrain() {
+    this.draining = true;
+    this.waitingQueue = [];
+    for (const match of Array.from(this.matches.values())) {
+      this.finishMatch(match, { reason: "server-restart", winnerId: null });
+    }
+    this.emitQueueStatus();
   }
 
   leaveSocketById(socketId: string) {
@@ -547,7 +558,7 @@ export class MultiplayerService {
       // Fire an achievement event for each participant. Best-effort —
       // don't block the finish path on db writes.
       const userId = (participant.socket.data as { userId?: string }).userId;
-      if (userId !== undefined) {
+      if (userId !== undefined && options.reason !== "server-restart") {
         const delta =
           outcome === "win"
             ? { multiplayerWins: 1, opponentsEliminated: 1 }

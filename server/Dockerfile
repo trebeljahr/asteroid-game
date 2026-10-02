@@ -29,6 +29,8 @@ RUN pnpm install --prod --frozen-lockfile --ignore-scripts --filter @simple-aste
 FROM node:24-bookworm-slim AS runtime
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 ENV NODE_ENV=production
 ENV PORT=9777
 
