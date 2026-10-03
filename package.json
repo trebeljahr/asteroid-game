@@ -22,7 +22,10 @@
     "tools:extract-shapes": "tsx scripts/extract-ship-shapes.ts",
     "format": "biome format --write .",
     "lint": "biome lint .",
-    "prepare": "husky"
+    "prepare": "husky",
+    "backup:status": "hatchkit backup status --project asteroid-game",
+    "backup:list": "hatchkit backup snapshots --project asteroid-game",
+    "backup:restore": "hatchkit backup restore --project asteroid-game"
   },
   "repository": {
     "type": "git"
