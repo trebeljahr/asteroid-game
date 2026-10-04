@@ -43,6 +43,15 @@ export const getDatabase = (): Database | null => {
   return database;
 };
 
+/**
+ * Raw pool for coordination queries that need explicit row locks and
+ * array parameters. Null when DATABASE_URL is unset.
+ */
+export const getPool = (): Pool | null => {
+  getDatabase();
+  return pool;
+};
+
 export const closeDatabase = async () => {
   if (pool !== null) {
     await pool.end();

@@ -76,6 +76,8 @@ export interface BattleRoyaleMatchFoundPayload {
   maxHealth: number;
   playerId: string;
   playerIds: string[];
+  /** Secret the client presents to resume this seat after a reconnect or server handoff. */
+  resumeToken: string;
   spawnIndex: number;
   worldSeed: number;
 }

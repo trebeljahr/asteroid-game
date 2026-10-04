@@ -13,6 +13,8 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
 
+const MIGRATION_LOCK_KEY = 7_301_026;
+
 export const runMigrations = async (connectionString?: string) => {
   const url = connectionString ?? process.env.DATABASE_URL;
   if (!url) {
@@ -20,13 +22,21 @@ export const runMigrations = async (connectionString?: string) => {
   }
 
   const pool = new Pool({ connectionString: url, max: 2 });
-  const db = drizzle(pool);
   const migrationsFolder = resolveMigrationsFolder();
 
-  console.log(`[db] Running migrations from ${migrationsFolder}`);
-  await migrate(db, { migrationsFolder });
-  console.log("[db] Migrations complete");
-  await pool.end();
+  // During a rolling deploy two replicas can start at the same time.
+  // A session advisory lock makes them apply migrations one after the other.
+  const client = await pool.connect();
+  try {
+    await client.query("SELECT pg_advisory_lock($1)", [MIGRATION_LOCK_KEY]);
+    console.log(`[db] Running migrations from ${migrationsFolder}`);
+    await migrate(drizzle(client), { migrationsFolder });
+    console.log("[db] Migrations complete");
+  } finally {
+    await client.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_KEY]).catch(() => {});
+    client.release();
+    await pool.end();
+  }
 };
 
 const resolveMigrationsFolder = () => {

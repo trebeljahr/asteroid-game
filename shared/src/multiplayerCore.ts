@@ -120,6 +120,8 @@ export interface MatchFoundPayload {
   maxHealth: number;
   opponentId: string;
   playerId: string;
+  /** Secret the client presents to resume this seat after a reconnect or server handoff. */
+  resumeToken: string;
   slot: PlayerSlot;
   worldSeed: number;
 }
@@ -162,8 +164,69 @@ export interface AchievementUnlockedPayload {
   unlockedAt: string;
 }
 
+export type MatchMode = "duel" | "battle-royale";
+
+export interface QueueJoinPayload {
+  mode: MatchMode;
+  shipVariant: ShipVariant;
+}
+
+export type QueueJoinResult =
+  | { enqueued: true }
+  | {
+      enqueued: false;
+      reason: "already-in-match" | "invalid-request" | "server-draining" | "unavailable";
+    };
+
+export type QueueLeaveResult =
+  | { removed: false; scope: "none" }
+  | { removed: true; scope: "match" | "queue" };
+
+export interface MatchResumeRequest {
+  matchId: string;
+  resumeToken: string;
+}
+
+export type MatchResumeResult =
+  | { status: "resumed" }
+  | { status: "pending" }
+  | { status: "ended"; reason: MatchEndReason }
+  | { status: "unknown" };
+
+export interface MatchMigratingPayload {
+  matchId: string;
+}
+
+/**
+ * Full authoritative state sent to one client after it re-attaches to a
+ * match, either on a new server after a handoff or after a reconnect.
+ * The client replaces its world and snapshot with this payload.
+ */
+export interface MatchResumedPayload {
+  arena: ArenaConfig;
+  matchId: string;
+  maxHealth: number;
+  mode: MatchMode;
+  opponentId: string | null;
+  placement: number | null;
+  playerId: string;
+  playerIds: string[];
+  slot: PlayerSlot;
+  snapshot: MatchSnapshotPayload;
+  survivorsRemaining: number;
+  world: {
+    ammo: WorldAmmoState[];
+    asteroids: WorldAsteroidState[];
+    hearts: WorldHeartState[];
+    worldVersion: number;
+  };
+}
+
 export interface ServerToClientEvents {
   "match:ended": (payload: MatchEndedPayload) => void;
+  "match:migrating": (payload: MatchMigratingPayload) => void;
+  "match:resumed": (payload: MatchResumedPayload) => void;
+  "server:draining": () => void;
   "match:found": (payload: MatchFoundPayload) => void;
   "match:snapshot": (payload: MatchSnapshotPayload) => void;
   "match:world-events": (payload: MatchWorldEventsPayload) => void;
@@ -180,6 +243,9 @@ export interface ServerToClientEvents {
 export interface ClientToServerEvents {
   "match:input": (payload: ShipInputState) => void;
   "br:input": (payload: ShipInputState) => void;
+  "match:resume": (payload: MatchResumeRequest, ack: (result: MatchResumeResult) => void) => void;
+  "queue:join": (payload: QueueJoinPayload, ack: (result: QueueJoinResult) => void) => void;
+  "queue:leave": (ack: (result: QueueLeaveResult) => void) => void;
 }
 
 export type SpatialHash = Map<string, Set<string>>;
@@ -332,6 +398,26 @@ export const createSeededRandom = (seed: number) => {
     result ^= result + Math.imul(result ^ (result >>> 7), 61 | result);
     return ((result ^ (result >>> 14)) >>> 0) / 4294967296;
   };
+};
+
+/**
+ * Same generator as createSeededRandom, but with its state exposed so a
+ * server can persist it in a match snapshot and continue the exact
+ * sequence on another process.
+ */
+export interface SeededRandomState {
+  state: number;
+}
+
+export const createSeededRandomState = (seed: number): SeededRandomState => {
+  return { state: seed >>> 0 };
+};
+
+export const nextSeededRandom = (random: SeededRandomState) => {
+  random.state = (random.state + 0x6d2b79f5) | 0;
+  let result = Math.imul(random.state ^ (random.state >>> 15), 1 | random.state);
+  result ^= result + Math.imul(result ^ (result >>> 7), 61 | result);
+  return ((result ^ (result >>> 14)) >>> 0) / 4294967296;
 };
 
 export const randomBetween = (random: () => number, minValue: number, maxValue: number) => {

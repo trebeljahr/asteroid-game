@@ -4,9 +4,7 @@ import { z } from "zod";
 
 import {
   ACHIEVEMENT_DEFINITIONS,
-  MULTIPLAYER_SHIP_VARIANTS,
   type MultiplayerRuntimeConfig,
-  type ShipVariant,
   toPublicAchievement,
 } from "../../../shared/src";
 import type { AchievementService } from "../achievementService";
@@ -38,34 +36,11 @@ const requireDeviceToken = t.middleware(({ ctx, next }) => {
 const authedProcedure = t.procedure.use(requireDeviceToken);
 
 interface MultiplayerController {
-  enqueueSocketById(
-    socketId: string,
-    shipVariant: ShipVariant,
-  ): { enqueued: false; reason: "already-matched" | "socket-not-found" | "server-draining" } | { enqueued: true };
   getRuntimeConfig(): MultiplayerRuntimeConfig;
-  leaveSocketById(
-    socketId: string,
-  ): { removed: false; scope: "none" } | { removed: true; scope: "match" | "queue" };
-}
-
-interface BattleRoyaleController {
-  enqueue(
-    socketId: string,
-    shipVariant: ShipVariant,
-  ):
-    | {
-        enqueued: false;
-        reason: "already-in-match" | "socket-not-found" | "lobby-full" | "server-draining";
-      }
-    | { enqueued: true };
-  leave(
-    socketId: string,
-  ): { removed: false; scope: "none" } | { removed: true; scope: "lobby" | "match" };
 }
 
 export const createAppRouter = (
   multiplayerService: MultiplayerController,
-  battleRoyaleService: BattleRoyaleController,
   achievementService: AchievementService,
 ) => {
   return t.router({
@@ -181,53 +156,12 @@ export const createAppRouter = (
         }),
     }),
 
+    // Queue commands travel over the socket itself ("queue:join" /
+    // "queue:leave"), so they always reach the replica holding the socket.
     multiplayer: t.router({
-      joinQueue: t.procedure
-        .input(
-          z.object({
-            socketId: z.string().min(1),
-            shipVariant: z.enum(MULTIPLAYER_SHIP_VARIANTS as unknown as [string, ...string[]]),
-          }),
-        )
-        .mutation(({ input }) => {
-          return multiplayerService.enqueueSocketById(
-            input.socketId,
-            input.shipVariant as ShipVariant,
-          );
-        }),
-      leaveQueue: t.procedure
-        .input(
-          z.object({
-            socketId: z.string().min(1),
-          }),
-        )
-        .mutation(({ input }) => {
-          return multiplayerService.leaveSocketById(input.socketId);
-        }),
       runtime: t.procedure.query(() => {
         return multiplayerService.getRuntimeConfig();
       }),
-    }),
-    battleRoyale: t.router({
-      joinQueue: t.procedure
-        .input(
-          z.object({
-            socketId: z.string().min(1),
-            shipVariant: z.enum(MULTIPLAYER_SHIP_VARIANTS as unknown as [string, ...string[]]),
-          }),
-        )
-        .mutation(({ input }) => {
-          return battleRoyaleService.enqueue(input.socketId, input.shipVariant as ShipVariant);
-        }),
-      leaveQueue: t.procedure
-        .input(
-          z.object({
-            socketId: z.string().min(1),
-          }),
-        )
-        .mutation(({ input }) => {
-          return battleRoyaleService.leave(input.socketId);
-        }),
     }),
   });
 };

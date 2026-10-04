@@ -9,9 +9,20 @@ import { Server } from "socket.io";
 import type { ClientToServerEvents, ServerToClientEvents } from "../../shared/src";
 import { achievementService } from "./achievementService";
 import { BattleRoyaleService } from "./battleRoyaleService";
+import { getPool } from "./db";
 import { runMigrations } from "./db/runMigrations";
-import { MultiplayerService } from "./multiplayerService";
-import { getRedisClient } from "./redis";
+import { getMultiplayerRuntimeConfig, MultiplayerService } from "./multiplayerService";
+import { ReplicaBus } from "./realtime/bus";
+import { DRAIN_DELAY_MS } from "./realtime/config";
+import { RealtimeCoordinator } from "./realtime/coordinator";
+import { MatchDurability } from "./realtime/durability";
+import { REPLICA_ID } from "./realtime/ids";
+import {
+  type CoordinationStore,
+  MemoryCoordinationStore,
+  PostgresCoordinationStore,
+} from "./realtime/store";
+import { connectRedis } from "./redis";
 import { createAppRouter, createTRPCContext } from "./trpc/router";
 
 const app = express();
@@ -24,17 +35,11 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
   },
 });
 
-const redisClient = getRedisClient();
-if (redisClient) {
-  const pubClient = redisClient;
-  const subClient = pubClient.duplicate();
-  io.adapter(createAdapter(pubClient, subClient));
-  console.log("[socket.io] Using Redis adapter for horizontal scaling");
-}
-
-const multiplayerService = new MultiplayerService(io);
-const battleRoyaleService = new BattleRoyaleService(io);
-const appRouter = createAppRouter(multiplayerService, battleRoyaleService, achievementService);
+let coordinator: RealtimeCoordinator | null = null;
+const appRouter = createAppRouter(
+  { getRuntimeConfig: getMultiplayerRuntimeConfig },
+  achievementService,
+);
 
 const clientDistPath = path.resolve(__dirname, "../../client/dist");
 
@@ -105,8 +110,7 @@ io.on("connection", (socket) => {
     // unlocks to just this user, even across multiple tabs.
     socket.join(userRoomId(userId));
   }
-  multiplayerService.registerSocket(socket);
-  battleRoyaleService.registerSocketHandlers(socket);
+  coordinator?.registerSocket(socket);
 });
 
 // Fan out achievement unlocks to the owning user's room. Since the
@@ -131,25 +135,58 @@ const port = Number(process.env.PORT ?? 9777);
 process.on("SIGTERM", () => {
   if (draining) return;
   draining = true;
-  multiplayerService.beginDrain();
-  battleRoyaleService.beginDrain();
+  // Hand live matches to another replica: final snapshot, lease
+  // `handoff`, then clients reconnect elsewhere and resume.
+  void coordinator?.beginDrain().catch((error) => {
+    console.error("[drain] handoff failed", error);
+  });
   // Coolify needs time to remove this instance from proxy routing.
   setTimeout(() => {
     io.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 5000).unref();
-  }, 20_000);
+  }, DRAIN_DELAY_MS);
 });
 
 const start = async () => {
+  let databaseReady = false;
   if (process.env.DATABASE_URL) {
     try {
       await runMigrations();
+      databaseReady = true;
     } catch (error) {
       console.error("[db] Startup migration failed. Continuing without persistence:", error);
     }
   } else {
     console.warn("[db] DATABASE_URL not set — user accounts and achievements disabled");
   }
+
+  const redis = await connectRedis();
+  if (redis !== null) {
+    io.adapter(createAdapter(redis, redis.duplicate()));
+    console.log("[socket.io] Using Redis adapter for horizontal scaling");
+  }
+
+  // Durable handoff needs both: Postgres holds leases, snapshots and the
+  // shared queue; Redis carries room fanout and replica-to-replica
+  // messages. Without either, run as one replica with in-memory state.
+  const pool = databaseReady ? getPool() : null;
+  const durable = pool !== null && redis !== null;
+  const store: CoordinationStore = durable
+    ? new PostgresCoordinationStore(pool)
+    : new MemoryCoordinationStore();
+  const bus = new ReplicaBus(
+    REPLICA_ID,
+    durable ? redis : null,
+    durable ? redis.duplicate() : null,
+  );
+  const durability = new MatchDurability(store, REPLICA_ID, durable);
+  coordinator = new RealtimeCoordinator(io, store, bus, durability, REPLICA_ID);
+  const context = { durability, io, replicaId: REPLICA_ID, routes: coordinator };
+  coordinator.attachHosts(new MultiplayerService(context), new BattleRoyaleService(context));
+  await coordinator.start();
+  console.log(
+    `[realtime] replica ${REPLICA_ID}: ${durable ? "durable match handoff (Postgres + Redis)" : "single replica, in-memory matches"}`,
+  );
 
   httpServer.listen(port, () => {
     console.log(`Server listening on http://localhost:${port}`);

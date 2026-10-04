@@ -1,5 +1,15 @@
 import { sql } from "drizzle-orm";
-import { integer, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import {
+  bigint,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+  uuid,
+} from "drizzle-orm/pg-core";
 
 /**
  * Every player gets a server-side account keyed by a persistent
@@ -83,6 +93,67 @@ export const matchResults = pgTable(
   (table) => {
     return {
       pk: primaryKey({ columns: [table.matchId, table.userId] }),
+    };
+  },
+);
+
+/**
+ * Ownership of a live match. Exactly one replica owns a match at a
+ * time; `epoch` is the fencing token. Every snapshot and result write
+ * is conditional on the current epoch and owner, so a replica that
+ * lost the lease can no longer write. States: `active` (owner renews
+ * `expires_at`), `handoff` (owner drained and wrote a final snapshot),
+ * `finished`. The battle-royale lobby uses one row with mode `lobby`.
+ */
+export const matchLeases = pgTable(
+  "match_leases",
+  {
+    matchId: text("match_id").primaryKey(),
+    mode: text("mode").notNull(),
+    ownerReplica: text("owner_replica").notNull(),
+    epoch: bigint("epoch", { mode: "number" }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    state: text("state").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => {
+    return {
+      claimIdx: index("match_leases_state_expires_idx").on(table.state, table.expiresAt),
+    };
+  },
+);
+
+/**
+ * Latest authoritative snapshot of a live match, written by the lease
+ * owner about twice a second and once more, final, at drain.
+ */
+export const matchSnapshots = pgTable("match_snapshots", {
+  matchId: text("match_id").primaryKey(),
+  epoch: bigint("epoch", { mode: "number" }).notNull(),
+  sequence: bigint("sequence", { mode: "number" }).notNull(),
+  state: jsonb("state").notNull(),
+  writtenAt: timestamp("written_at", { withTimezone: true }).notNull().default(sql`now()`),
+});
+
+/**
+ * Shared matchmaking queue. Each row is one queued socket, owned by the
+ * replica that holds the socket; that replica refreshes `expires_at`.
+ * Any non-draining replica may take tickets and create the match.
+ */
+export const matchmakingTickets = pgTable(
+  "matchmaking_tickets",
+  {
+    socketId: text("socket_id").primaryKey(),
+    mode: text("mode").notNull(),
+    replicaId: text("replica_id").notNull(),
+    userId: uuid("user_id"),
+    shipVariant: text("ship_variant").notNull(),
+    enqueuedAt: timestamp("enqueued_at", { withTimezone: true }).notNull().default(sql`now()`),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => {
+    return {
+      modeIdx: index("matchmaking_tickets_mode_enqueued_idx").on(table.mode, table.enqueuedAt),
     };
   },
 );

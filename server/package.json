@@ -15,7 +15,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx ./src/db/runMigrations.ts",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "test": "MATCH_LEASE_TTL_MS=1000 MATCH_LEASE_RENEW_MS=200 MATCH_RESUME_GRACE_MS=1500 node --import tsx --test --test-concurrency=1 test/*.test.ts"
   },
   "author": "Rico Trebeljahr",
   "license": "ISC",

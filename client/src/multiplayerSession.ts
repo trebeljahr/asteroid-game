@@ -2,6 +2,9 @@ import p5 from "p5";
 import { io, type Socket } from "socket.io-client";
 
 import {
+  addAmmoToWorld,
+  addAsteroidToWorld,
+  addHeartToWorld,
   applyWorldEvents,
   type BattleRoyaleEliminatedPayload,
   type BattleRoyaleLobbyPayload,
@@ -12,6 +15,7 @@ import {
   type ClientToServerEvents,
   circleIntersectsBounds,
   circleOverlapsShipCollider,
+  createEmptyMatchWorld,
   createInitialBattleRoyaleWorld,
   createInitialMatchWorld,
   getAmmoPacketsInBounds,
@@ -30,6 +34,7 @@ import {
   type MatchmakingStatusPayload,
   type MatchOutcome,
   type MatchPlayerSnapshot,
+  type MatchResumedPayload,
   type MatchSnapshotPayload,
   type MatchWorldEventsPayload,
   type MatchWorldRuntime,
@@ -86,6 +91,12 @@ interface ActiveMatchState {
   /** All player ids in this match, including self. Used by BR rendering. */
   allPlayerIds: string[];
   playerId: string;
+  /** Presented with matchId to re-attach after a reconnect or server handoff. */
+  resumeToken: string;
+  /** True while the client reconnects and re-attaches to the match. */
+  migrating: boolean;
+  /** True once the match was resumed at least once (changes countdown copy). */
+  resumed: boolean;
   slot: PlayerSlot;
   snapshot: MatchSnapshotPayload | null;
   snapshotReceivedAt: number;
@@ -114,6 +125,13 @@ interface MultiplayerViewState {
 }
 
 const SNAPSHOT_TICK_MS = 1000 / 60;
+/** How long the client keeps trying to resume before it gives the match up. */
+const RESUME_DEADLINE_MS = 25_000;
+const RESUME_RETRY_MS = 500;
+const RESUME_COUNTDOWN_MS = 3000;
+/** No snapshot for this long means the match owner is gone: try to resume. */
+const SNAPSHOT_STALL_MS = 3000;
+const RECONNECT_RETRY_MS = 400;
 const SHIP_WIDTH = 60;
 const SHIP_HEIGHT = 120;
 const WORLD_CULL_PADDING = 220;
@@ -289,6 +307,11 @@ class MultiplayerClientSession {
   private playerDestructions = new Map<string, PlayerDestructionState>();
   private shipDebrisEffects: ShipDebrisSystem | null = null;
   private socket: Socket<ServerToClientEvents, ClientToServerEvents> | null = null;
+  private resumeTimer: ReturnType<typeof setInterval> | null = null;
+  private resumeDeadline = 0;
+  private resumeInFlight = false;
+  private resumeTimeouts = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private thrusters = new Map<string, ThrusterExhaustSystem>();
   private viewState = createInitialViewState();
 
@@ -350,6 +373,26 @@ class MultiplayerClientSession {
       return;
     }
 
+    if (
+      !activeMatch.migrating &&
+      activeMatch.snapshot !== null &&
+      performance.now() - activeMatch.snapshotReceivedAt > SNAPSHOT_STALL_MS
+    ) {
+      // The match owner went quiet (crash or handoff we did not hear about).
+      this.beginMigration();
+    }
+
+    if (activeMatch.migrating) {
+      if (activeMatch.snapshot !== null && activeMatch.snapshot.phase === "active") {
+        this.drawMatchWorld(p, activeMatch);
+      } else {
+        this.drawBackdrop(p);
+      }
+      this.drawMatchFoundOverlay(p, activeMatch);
+      this.drawHint(p, "Esc: menu");
+      return;
+    }
+
     if (activeMatch.snapshot === null || activeMatch.snapshot.phase === "countdown") {
       this.drawBackdrop(p);
       this.drawMatchFoundOverlay(p, activeMatch);
@@ -383,11 +426,19 @@ class MultiplayerClientSession {
       return;
     }
 
+    // WebSocket only: the polling transport needs sticky sessions, and
+    // replicas behind a round-robin proxy do not share Engine.IO sessions.
     const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io({
       autoConnect: false,
       auth: {
         deviceToken: getOrCreateDeviceToken(),
       },
+      reconnectionDelay: RECONNECT_RETRY_MS,
+      reconnectionDelayMax: 2000,
+      // A frozen replica can accept TCP but never answer: give up quickly
+      // so the next attempt can reach another replica.
+      timeout: 5000,
+      transports: ["websocket"],
     });
 
     socket.on("connect", () => {
@@ -396,14 +447,28 @@ class MultiplayerClientSession {
       }
 
       this.viewState.errorMessage = null;
-      this.viewState.status = "queueing";
-      if (socket.id !== undefined) {
-        void this.joinQueue(socket.id);
+      if (this.viewState.match !== null) {
+        // Back on a (possibly different) server: re-attach to the match.
+        this.beginMigration();
+        return;
       }
+
+      this.viewState.status = "queueing";
+      void this.joinQueue();
     });
 
     socket.on("connect_error", () => {
       if (!this.isMultiplayerModeActive() || this.isLeavingMode) {
+        return;
+      }
+
+      if (!socket.active) {
+        // Rejected by the server (for example a draining replica). Socket.IO
+        // does not retry that on its own; the next attempt may reach another
+        // replica.
+        this.scheduleReconnect();
+      }
+      if (this.viewState.match !== null) {
         return;
       }
 
@@ -412,19 +477,18 @@ class MultiplayerClientSession {
       this.viewState.status = "error";
     });
 
-    socket.on("disconnect", () => {
+    socket.on("disconnect", (reason) => {
       if (!this.isMultiplayerModeActive() || this.isLeavingMode) {
         return;
       }
 
-      const hadActiveMatch = this.viewState.match !== null;
-      this.resetViewState();
+      if (reason === "io server disconnect") {
+        // The server closed this socket (restart or handoff): reconnect.
+        this.scheduleReconnect();
+      }
 
-      if (hadActiveMatch) {
-        showMultiplayerResult(
-          "Connection lost",
-          "The arena link dropped before the match could finish. Rejoin multiplayer to battle again.",
-        );
+      if (this.viewState.match !== null) {
+        this.beginMigration();
         return;
       }
 
@@ -432,8 +496,28 @@ class MultiplayerClientSession {
       this.viewState.status = "connecting";
     });
 
+    socket.on("server:draining", () => {
+      if (!this.isMultiplayerModeActive()) return;
+      if (this.viewState.match !== null) {
+        this.beginMigration();
+        return;
+      }
+      this.viewState.errorMessage = "Server restarting. Reconnecting.";
+      this.viewState.status = "connecting";
+    });
+
+    socket.on("match:migrating", (payload) => {
+      if (!this.isMultiplayerModeActive() || this.viewState.match === null) return;
+      if (payload.matchId !== this.viewState.match.matchId) return;
+      this.beginMigration();
+    });
+
+    socket.on("match:resumed", (payload: MatchResumedPayload) => {
+      this.applyResumedMatch(payload);
+    });
+
     socket.on("matchmaking:status", (payload: MatchmakingStatusPayload) => {
-      if (!this.isMultiplayerModeActive()) {
+      if (!this.isMultiplayerModeActive() || this.viewState.match !== null) {
         return;
       }
 
@@ -466,6 +550,9 @@ class MultiplayerClientSession {
         opponentId: payload.opponentId,
         allPlayerIds: [payload.playerId, payload.opponentId],
         playerId: payload.playerId,
+        resumeToken: payload.resumeToken,
+        migrating: false,
+        resumed: false,
         slot: payload.slot,
         snapshot: null,
         snapshotReceivedAt: performance.now(),
@@ -489,7 +576,7 @@ class MultiplayerClientSession {
     });
 
     socket.on("br:lobby", (payload: BattleRoyaleLobbyPayload) => {
-      if (!this.isMultiplayerModeActive()) return;
+      if (!this.isMultiplayerModeActive() || this.viewState.match !== null) return;
       if (this.getActiveModeMode() !== "battle-royale") return;
       this.viewState.battleRoyaleLobby = {
         phase: payload.phase,
@@ -516,6 +603,9 @@ class MultiplayerClientSession {
         opponentId: null,
         allPlayerIds: payload.playerIds.slice(),
         playerId: payload.playerId,
+        resumeToken: payload.resumeToken,
+        migrating: false,
+        resumed: false,
         // Slot is unused in BR but the field remains for duel
         // compatibility.
         slot: "alpha",
@@ -564,6 +654,7 @@ class MultiplayerClientSession {
       }
       if (this.viewState.match.mode !== "battle-royale") return;
       if (payload.matchId !== this.viewState.match.matchId) return;
+      if (this.viewState.match.migrating) return;
 
       const previousSnapshot = this.viewState.match.snapshot;
       if (previousSnapshot !== null && payload.sequence <= previousSnapshot.sequence) {
@@ -622,6 +713,7 @@ class MultiplayerClientSession {
       }
       if (this.viewState.match.mode !== "battle-royale") return;
       if (payload.matchId !== this.viewState.match.matchId) return;
+      if (this.viewState.match.migrating) return;
       if (payload.worldVersion <= this.viewState.match.worldVersion) return;
 
       this.playWorldEventEffects(this.viewState.match, payload.events);
@@ -678,7 +770,7 @@ class MultiplayerClientSession {
       if (!this.isMultiplayerModeActive() || this.viewState.match === null) {
         return;
       }
-      if (payload.matchId !== this.viewState.match.matchId) {
+      if (payload.matchId !== this.viewState.match.matchId || this.viewState.match.migrating) {
         return;
       }
       if (payload.worldVersion <= this.viewState.match.worldVersion) {
@@ -694,7 +786,7 @@ class MultiplayerClientSession {
       if (!this.isMultiplayerModeActive() || this.viewState.match === null) {
         return;
       }
-      if (payload.matchId !== this.viewState.match.matchId) {
+      if (payload.matchId !== this.viewState.match.matchId || this.viewState.match.migrating) {
         return;
       }
 
@@ -1079,10 +1171,31 @@ class MultiplayerClientSession {
   }
 
   private drawMatchFoundOverlay(p: p5, match: ActiveMatchState) {
-    const remainingCountdownMs =
-      match.snapshot?.countdownMs ??
-      Math.max(0, MATCH_COUNTDOWN_MS - (performance.now() - match.foundAt));
-    const progress = 1 - remainingCountdownMs / MATCH_COUNTDOWN_MS;
+    const totalCountdownMs = match.resumed ? RESUME_COUNTDOWN_MS : MATCH_COUNTDOWN_MS;
+    const remainingCountdownMs = match.migrating
+      ? Math.max(0, this.resumeDeadline - performance.now())
+      : (match.snapshot?.countdownMs ??
+        Math.max(0, MATCH_COUNTDOWN_MS - (performance.now() - match.foundAt)));
+    const progress = match.migrating
+      ? 1 - remainingCountdownMs / RESUME_DEADLINE_MS
+      : 1 - remainingCountdownMs / totalCountdownMs;
+    const copy = match.migrating
+      ? {
+          body: "The server is handing this match to another instance. Your ship is safe and the match resumes in a moment.",
+          label: "Reconnecting",
+          title: "Reconnecting to the arena",
+        }
+      : match.resumed
+        ? {
+            body: "Back in the arena. The match continues from where it paused.",
+            label: "Resuming",
+            title: "Match resuming",
+          }
+        : {
+            body: "Get ready. Stabilizing the arena link and preparing both ships for launch.",
+            label: "Launch sequence",
+            title: "Another pilot found",
+          };
     const countdownValue = Math.max(1, Math.min(3, Math.ceil(remainingCountdownMs / 1000)));
     const cardWidth = Math.min(560, width - 40);
     const cardHeight = 244;
@@ -1110,19 +1223,13 @@ class MultiplayerClientSession {
     p.fill(241, 247, 252);
     p.textAlign(p.CENTER, p.CENTER);
     p.textSize(32);
-    p.text("Another pilot found", width / 2, cardY + 58);
+    p.text(copy.title, width / 2, cardY + 58);
 
     p.fill(196, 216, 231);
     p.textAlign(p.CENTER, p.TOP);
     p.textSize(16);
     p.textLeading(24);
-    p.text(
-      "Get ready. Stabilizing the arena link and preparing both ships for launch.",
-      cardX + 36,
-      cardY + 98,
-      cardWidth - 72,
-      58,
-    );
+    p.text(copy.body, cardX + 36, cardY + 98, cardWidth - 72, 58);
 
     p.noStroke();
     p.fill(12, 28, 46, 220);
@@ -1133,7 +1240,11 @@ class MultiplayerClientSession {
     p.fill(180, 207, 224, 188);
     p.textAlign(p.CENTER, p.TOP);
     p.textSize(13);
-    p.text(`Launch sequence • ${countdownValue}`, width / 2, barY + 24);
+    p.text(
+      match.migrating ? copy.label : `${copy.label} • ${countdownValue}`,
+      width / 2,
+      barY + 24,
+    );
     p.pop();
   }
 
@@ -1816,28 +1927,166 @@ class MultiplayerClientSession {
     return null;
   }
 
-  private async joinQueue(socketId: string) {
+  private async joinQueue() {
+    const socket = this.socket;
+    if (socket === null) return;
     try {
       const state = getGameState();
-      const mode = this.getActiveModeMode();
-      if (mode === "battle-royale") {
-        await trpcClient.battleRoyale.joinQueue.mutate({
-          socketId,
-          shipVariant: state.settings.shipVariant,
-        });
-      } else {
-        await trpcClient.multiplayer.joinQueue.mutate({
-          socketId,
-          shipVariant: state.settings.shipVariant,
-        });
+      const mode = this.getActiveModeMode() ?? "duel";
+      const result = await socket.timeout(5000).emitWithAck("queue:join", {
+        mode,
+        shipVariant: state.settings.shipVariant,
+      });
+      if (result.enqueued || result.reason === "already-in-match") {
+        return;
       }
+      if (result.reason === "server-draining") {
+        // This replica is shutting down; it will close the socket and the
+        // reconnect lands on a live replica.
+        return;
+      }
+      throw new Error(result.reason);
     } catch (_error) {
-      if (!this.isMultiplayerModeActive()) {
+      if (!this.isMultiplayerModeActive() || this.viewState.match !== null) {
         return;
       }
 
-      this.viewState.errorMessage = "Unable to enter matchmaking through the typed control plane.";
+      this.viewState.errorMessage = "Unable to enter matchmaking. Try again in a moment.";
       this.viewState.status = "error";
+    }
+  }
+
+  private scheduleReconnect() {
+    if (this.reconnectTimer !== null) return;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (this.socket === null || this.socket.connected || this.isLeavingMode) return;
+      if (!this.isMultiplayerModeActive()) return;
+      this.socket.connect();
+    }, RECONNECT_RETRY_MS);
+  }
+
+  /**
+   * Freeze the match and keep asking the server to re-attach us with the
+   * resume token until it succeeds, the match is gone, or time runs out.
+   */
+  private beginMigration() {
+    const match = this.viewState.match;
+    if (match === null) return;
+    if (!match.migrating) {
+      match.migrating = true;
+      this.resumeDeadline = performance.now() + RESUME_DEADLINE_MS;
+      this.stopPredictionLoop();
+    }
+    if (this.resumeTimer === null) {
+      this.resumeTimer = setInterval(() => {
+        void this.tryResume();
+      }, RESUME_RETRY_MS);
+    }
+    void this.tryResume();
+  }
+
+  private async tryResume() {
+    const match = this.viewState.match;
+    if (match === null || !match.migrating) {
+      this.stopResumeLoop();
+      return;
+    }
+    if (performance.now() > this.resumeDeadline) {
+      this.abandonMatch("lost");
+      return;
+    }
+    const socket = this.socket;
+    if (socket === null || !socket.connected || this.resumeInFlight) return;
+
+    this.resumeInFlight = true;
+    try {
+      const result = await socket.timeout(2000).emitWithAck("match:resume", {
+        matchId: match.matchId,
+        resumeToken: match.resumeToken,
+      });
+      if (this.viewState.match !== match) return;
+      if (result.status === "ended") {
+        this.abandonMatch("ended");
+      } else if (result.status === "unknown") {
+        this.abandonMatch("lost");
+      }
+      // "resumed": match:resumed carries the state. "pending": retry.
+      this.resumeTimeouts = 0;
+    } catch (_error) {
+      // Ack timed out. The server holding this socket may be frozen or
+      // gone without closing it: after two misses, open a new connection,
+      // which can land on another replica.
+      this.resumeTimeouts++;
+      if (this.resumeTimeouts >= 2) {
+        this.resumeTimeouts = 0;
+        socket.disconnect();
+        this.scheduleReconnect();
+      }
+    } finally {
+      this.resumeInFlight = false;
+    }
+  }
+
+  private stopResumeLoop() {
+    if (this.resumeTimer !== null) {
+      clearInterval(this.resumeTimer);
+      this.resumeTimer = null;
+    }
+  }
+
+  private abandonMatch(kind: "ended" | "lost") {
+    this.stopResumeLoop();
+    clearShipInput();
+    this.resetViewState();
+    if (kind === "ended") {
+      showMultiplayerResult(
+        "Match over",
+        "The match ended while you were reconnecting. Queue again for a new match.",
+      );
+      return;
+    }
+    showMultiplayerResult(
+      "Match interrupted",
+      "The connection to the match was lost and it could not be resumed. This round did not count. Queue again for a new match.",
+    );
+  }
+
+  /** Replace local match state with the server's after a re-attach. */
+  private applyResumedMatch(payload: MatchResumedPayload) {
+    const match = this.viewState.match;
+    if (!this.isMultiplayerModeActive() || match === null) return;
+    if (payload.matchId !== match.matchId) return;
+
+    const world = createEmptyMatchWorld();
+    for (const asteroid of payload.world.asteroids)
+      addAsteroidToWorld(world, asteroid, payload.arena);
+    for (const heart of payload.world.hearts) addHeartToWorld(world, heart, payload.arena);
+    for (const ammo of payload.world.ammo) addAmmoToWorld(world, ammo, payload.arena);
+
+    this.stopResumeLoop();
+    this.stopPredictionLoop();
+    // Keep the input sequence counter: the server compares it with the
+    // last input it applied before the handoff.
+    this.predictedSelf = null;
+    this.inputBuffer = [];
+
+    match.world = world;
+    match.worldVersion = payload.world.worldVersion;
+    match.snapshot = payload.snapshot;
+    match.snapshotReceivedAt = performance.now();
+    match.survivorsRemaining = payload.survivorsRemaining;
+    match.placement = payload.placement ?? match.placement;
+    match.migrating = false;
+    match.resumed = true;
+    this.viewState.status = "matched";
+
+    if (payload.snapshot.phase === "active") {
+      const serverSelf = payload.snapshot.players.find((player) => player.id === match.playerId);
+      if (serverSelf !== undefined) {
+        this.reconcilePredictedSelf(serverSelf, match.arena);
+        this.startPredictionLoop();
+      }
     }
   }
 
@@ -1846,18 +2095,16 @@ class MultiplayerClientSession {
     clearShipInput();
 
     if (this.socket !== null) {
-      if (this.socket.connected && this.socket.id !== undefined) {
-        // Best-effort leave on both queues — we don't always know
-        // which mode the session was in, and the server silently
-        // no-ops on sockets that aren't in the corresponding queue.
-        void trpcClient.multiplayer.leaveQueue.mutate({ socketId: this.socket.id }).catch(() => {
-          // Best-effort shutdown.
-        });
-        void trpcClient.battleRoyale.leaveQueue.mutate({ socketId: this.socket.id }).catch(() => {
-          // Best-effort shutdown.
-        });
+      if (this.socket.connected) {
+        // Leaving on purpose: drop the queue ticket or forfeit the match
+        // now instead of holding the seat for the reconnect grace period.
+        this.socket.emit("queue:leave", () => {});
       }
       this.socket.disconnect();
+    }
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
     }
 
     this.resetViewState();
@@ -2150,6 +2397,7 @@ class MultiplayerClientSession {
   }
 
   private resetViewState() {
+    this.stopResumeLoop();
     this.clearPendingResult();
     this.viewState = createInitialViewState();
     this.resetClientEffects();
