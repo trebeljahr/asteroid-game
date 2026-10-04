@@ -51,7 +51,7 @@ USER node
 
 EXPOSE 9777
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=5 \
+HEALTHCHECK --interval=2s --timeout=5s --start-period=15s --retries=5 \
   CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '9777') + '/health').then(r => { if (!r.ok) process.exit(1); }).catch(() => process.exit(1))"
 
 CMD ["node", "server/dist/server/src/server.js"]

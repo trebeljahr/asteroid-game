@@ -7,6 +7,12 @@
  *
  * Usage:
  *   BACKEND_URL=http://server:9777 node server.mjs
+ *
+ * BACKEND_URL is the address of the game server as this container can
+ * reach it. In Docker Compose that is the service name
+ * (http://server:9777). When the client runs as its own image app, set it
+ * to the server app's routed or internal URL; NODE_ENV=production refuses
+ * to start without it, instead of silently proxying to 127.0.0.1.
  */
 
 import { createReadStream, existsSync, statSync } from "node:fs";
@@ -35,6 +41,10 @@ const MIME_TYPES = {
 };
 
 const port = Number.parseInt(process.env.PORT || "80", 10);
+if (!process.env.BACKEND_URL && process.env.NODE_ENV === "production") {
+  console.error("BACKEND_URL must be set to the game server URL (for example http://server:9777).");
+  process.exit(1);
+}
 const backendTarget =
   process.env.BACKEND_URL || `http://127.0.0.1:${process.env.API_PORT || "9777"}`;
 const backendUrl = new URL(backendTarget);
