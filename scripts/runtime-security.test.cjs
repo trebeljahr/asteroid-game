@@ -23,16 +23,20 @@ test("Express preserves JSON parsing and its default body limit", { timeout: 500
   app.post("/echo", (req, res) => res.json(req.body));
   app.use((err, _req, res, _next) => res.sendStatus(err.status || 500));
   const server = createServer(app);
-  t.after(() => new Promise((resolve) => {
-    server.closeAllConnections();
-    server.close(resolve);
-  }));
+  t.after(
+    () =>
+      new Promise((resolve) => {
+        server.closeAllConnections();
+        server.close(resolve);
+      }),
+  );
   const url = await listen(server);
-  const post = (body) => fetch(`${url}/echo`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body,
-  });
+  const post = (body) =>
+    fetch(`${url}/echo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
   const valid = await post(JSON.stringify({ movement: { x: 1, y: 2 } }));
   assert.equal(valid.status, 200);
   assert.deepEqual(await valid.json(), { movement: { x: 1, y: 2 } });
@@ -46,10 +50,13 @@ for (const transport of ["polling", "websocket"]) {
     const io = new Server(server, { maxHttpBufferSize: 1024 });
     io.on("connection", (socket) => socket.on("echo", (payload, ack) => ack(payload)));
     let client;
-    t.after(() => new Promise((resolve) => {
-      client?.disconnect();
-      io.close(resolve);
-    }));
+    t.after(
+      () =>
+        new Promise((resolve) => {
+          client?.disconnect();
+          io.close(resolve);
+        }),
+    );
     const url = await listen(server);
     client = connect(url, { transports: [transport], reconnection: false, timeout: 1500 });
     await Promise.race([
