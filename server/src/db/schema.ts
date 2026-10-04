@@ -65,6 +65,28 @@ export const userAchievements = pgTable(
   },
 );
 
+/**
+ * One receipt per counted player per match. The receipt is inserted in
+ * the same transaction as the user_stats increments, so replaying a
+ * match finish (retry, handoff, duplicate owner) changes stats once.
+ */
+export const matchResults = pgTable(
+  "match_results",
+  {
+    matchId: text("match_id").notNull(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    outcome: text("outcome").notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => {
+    return {
+      pk: primaryKey({ columns: [table.matchId, table.userId] }),
+    };
+  },
+);
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type UserStats = typeof userStats.$inferSelect;

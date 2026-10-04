@@ -8,7 +8,14 @@ import {
   type PublicAchievement,
   toPublicAchievement,
 } from "../../shared/src";
-import { getDatabase, type UserStats, userAchievements, userStats } from "./db";
+import {
+  type Database,
+  getDatabase,
+  matchResults,
+  type UserStats,
+  userAchievements,
+  userStats,
+} from "./db";
 
 const toAchievementStats = (row: UserStats): AchievementStats => {
   return {
@@ -51,6 +58,25 @@ export type StatDelta = Partial<{
   goalsCleared: number;
   opponentsEliminated: number;
 }>;
+
+/** One counted player in a finished match. */
+export interface MatchResultEntry {
+  delta: StatDelta;
+  event: AchievementEvent;
+  outcome: string;
+  userId: string;
+}
+
+/** The lease a result write is fenced on. */
+export interface ResultFence {
+  epoch: number;
+  matchId: string;
+  owner: string;
+}
+
+export type MatchResultOutcome = "applied" | "fenced" | "no-database";
+
+type Executor = Pick<Database, "execute" | "insert" | "update">;
 
 export interface AchievementUnlockEvent {
   userId: string;
@@ -115,6 +141,75 @@ export class AchievementService extends EventEmitter {
       }
       return this.evaluateUnlocks(userId, stats, event);
     });
+  }
+
+  /**
+   * Record a finished match exactly once. In one transaction: check the
+   * lease fence (current epoch and owner, not yet finished), insert one
+   * `match_results` receipt per player, increment stats only for
+   * receipts that were new, and mark the lease finished. Replaying the
+   * same finish, or a stale owner writing after a handoff, changes no
+   * stats.
+   */
+  async applyMatchResults(
+    matchId: string,
+    fence: ResultFence | null,
+    results: MatchResultEntry[],
+  ): Promise<MatchResultOutcome> {
+    const db = getDatabase();
+    if (db === null) {
+      return "no-database";
+    }
+
+    const counted: Array<{ entry: MatchResultEntry; stats: AchievementStats }> = [];
+    const fenced = await db.transaction(async (tx) => {
+      if (fence !== null) {
+        const lease = await tx.execute(sql`
+          SELECT 1 FROM match_leases
+          WHERE match_id = ${matchId} AND epoch = ${fence.epoch}
+            AND owner_replica = ${fence.owner} AND state <> 'finished'
+          FOR UPDATE`);
+        if (lease.rows.length === 0) {
+          return true;
+        }
+      }
+
+      for (const entry of results) {
+        const receipt = await tx
+          .insert(matchResults)
+          .values({ matchId, userId: entry.userId, outcome: entry.outcome })
+          .onConflictDoNothing()
+          .returning({ userId: matchResults.userId });
+        if (receipt.length === 0) {
+          continue;
+        }
+        const stats = await this.applyStatDelta(entry.userId, entry.delta, tx);
+        if (stats !== null) {
+          counted.push({ entry, stats });
+        }
+      }
+
+      if (fence !== null) {
+        await tx.execute(sql`
+          UPDATE match_leases SET state = 'finished', updated_at = now()
+          WHERE match_id = ${matchId} AND epoch = ${fence.epoch}`);
+        await tx.execute(sql`DELETE FROM match_snapshots WHERE match_id = ${matchId}`);
+      }
+      return false;
+    });
+
+    if (fenced) {
+      return "fenced";
+    }
+
+    for (const { entry, stats } of counted) {
+      void this.locks
+        .run(entry.userId, () => this.evaluateUnlocks(entry.userId, stats, entry.event))
+        .catch((error) => {
+          console.error("[achievements] unlock evaluation failed", error);
+        });
+    }
+    return "applied";
   }
 
   /**
@@ -189,8 +284,12 @@ export class AchievementService extends EventEmitter {
    * user has no stat row and can't be created, which shouldn't
    * happen in practice).
    */
-  private async applyStatDelta(userId: string, delta: StatDelta): Promise<AchievementStats | null> {
-    const db = getDatabase();
+  private async applyStatDelta(
+    userId: string,
+    delta: StatDelta,
+    executor?: Executor,
+  ): Promise<AchievementStats | null> {
+    const db = executor ?? getDatabase();
     if (db === null) return null;
 
     const setClauses: Record<string, unknown> = {
