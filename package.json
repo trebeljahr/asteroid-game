@@ -25,7 +25,10 @@
     "prepare": "husky",
     "backup:status": "hatchkit backup status --project asteroid-game",
     "backup:list": "hatchkit backup snapshots --project asteroid-game",
-    "backup:restore": "hatchkit backup restore --project asteroid-game"
+    "backup:restore": "hatchkit backup restore --project asteroid-game",
+    "test:server": "pnpm --filter @simple-asteroid-game/server test",
+    "proof:handoff": "node scripts/handoff-proof/run.mjs",
+    "proof:stack": "node scripts/handoff-proof/stack.mjs"
   },
   "repository": {
     "type": "git"
