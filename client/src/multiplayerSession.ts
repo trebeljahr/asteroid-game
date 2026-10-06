@@ -126,7 +126,7 @@ interface MultiplayerViewState {
 
 const SNAPSHOT_TICK_MS = 1000 / 60;
 /** How long the client keeps trying to resume before it gives the match up. */
-const RESUME_DEADLINE_MS = 25_000;
+const RESUME_DEADLINE_MS = 45_000;
 const RESUME_RETRY_MS = 500;
 const RESUME_COUNTDOWN_MS = 3000;
 /** No snapshot for this long means the match owner is gone: try to resume. */
@@ -437,7 +437,7 @@ class MultiplayerClientSession {
       reconnectionDelayMax: 2000,
       // A frozen replica can accept TCP but never answer: give up quickly
       // so the next attempt can reach another replica.
-      timeout: 5000,
+      timeout: 3000,
       transports: ["websocket"],
     });
 

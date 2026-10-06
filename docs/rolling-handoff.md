@@ -59,7 +59,7 @@ inside the 20 s drain.
   the match and waits for players. Clients reconnect and send
   `match:resume` with match ID and resume token. When every surviving
   player is back, a 3 s countdown starts. A player who does not return
-  within 10 s forfeits. If nobody returns, or the snapshot is missing or
+  within 30 s forfeits. If nobody returns, or the snapshot is missing or
   invalid, the match ends uncounted (`server-restart`).
 - **Crash.** If the owner dies without draining, its lease expires
   after 5 s and another replica resumes from the last periodic snapshot.
@@ -69,7 +69,7 @@ inside the 20 s drain.
   `finished` update. A replayed finish or a stale owner changes no
   stats.
 - **Leaving and disconnects.** `queue:leave` (leaving the mode) forfeits
-  at once. Any socket disconnect keeps the seat for the 10 s grace, so a
+  at once. Any socket disconnect keeps the seat for the 30 s grace, so a
   dropped connection can resume.
 
 ## Proof

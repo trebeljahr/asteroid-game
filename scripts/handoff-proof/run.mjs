@@ -48,7 +48,7 @@ const logDir = process.env.PROOF_LOG_DIR ?? path.join(root, ".handoff-proof-logs
 mkdirSync(logDir, { recursive: true });
 
 const LEASE_TTL_MS = 5000;
-const RESUME_GRACE_MS = 10_000;
+const RESUME_GRACE_MS = 30_000;
 const DRAIN_DELAY_MS = 8000;
 const PLAYER_MAX_SPEED = 8.8;
 // The client's last snapshot can be up to two ticks older than the
