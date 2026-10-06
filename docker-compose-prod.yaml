@@ -28,7 +28,10 @@ services:
       retries: 10
 
   server:
-    image: ghcr.io/trebeljahr/asteroid-game-server:main
+    # Legacy Compose rollback target only: pinned to the last Compose
+    # release (9c8f832). The live app is the Docker Image apps; never point
+    # this file at a newer build, which expects external Postgres/Redis.
+    image: ghcr.io/trebeljahr/asteroid-game-server@sha256:ba539fe061863645cfdd6a3083ed0d64892a62767e02caad414197d331657143
     pull_policy: always
     restart: unless-stopped
     environment:
@@ -43,7 +46,7 @@ services:
         condition: service_healthy
 
   client:
-    image: ghcr.io/trebeljahr/asteroid-game-client:main
+    image: ghcr.io/trebeljahr/asteroid-game-client@sha256:3a5e227a328390d8185e2debd3e98c17a1274e7802d60a78b01fc55d43d1f7a8
     pull_policy: always
     restart: unless-stopped
     environment:
