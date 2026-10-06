@@ -7,15 +7,61 @@ on:
 
 concurrency:
   group: asteroid-game-deploy
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
   packages: write
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: asteroid_ci
+          POSTGRES_PASSWORD: asteroid_ci
+          POSTGRES_DB: asteroid_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U asteroid_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run check
+
+      - name: Lint
+        run: pnpm exec biome check --diagnostic-level=error .
+
+      - name: Runtime and match handoff tests
+        env:
+          TEST_DATABASE_URL: postgres://asteroid_ci:asteroid_ci@127.0.0.1:5432/asteroid_ci
+        run: pnpm run test:runtime-security && pnpm run test:server
+
   build-client:
     runs-on: ubuntu-latest
+    needs: verify
     steps:
       - name: Check out source
         uses: actions/checkout@v6
@@ -37,7 +83,7 @@ jobs:
           images: ghcr.io/${{ github.repository_owner }}/asteroid-game-client
           tags: |
             type=raw,value=main
-            type=sha
+            type=sha,format=long
 
       - name: Build and push client image
         uses: docker/build-push-action@v6
@@ -51,6 +97,7 @@ jobs:
 
   build-server:
     runs-on: ubuntu-latest
+    needs: verify
     steps:
       - name: Check out source
         uses: actions/checkout@v6
@@ -72,7 +119,7 @@ jobs:
           images: ghcr.io/${{ github.repository_owner }}/asteroid-game-server
           tags: |
             type=raw,value=main
-            type=sha
+            type=sha,format=long
 
       - name: Build and push server image
         uses: docker/build-push-action@v6
@@ -90,6 +137,22 @@ jobs:
     # both image apps are live and deploy secrets point at their resource UUIDs.
     if: vars.ASTEROID_IMAGE_ROLLOUT_READY == 'true'
     steps:
+      # Point `:live` at the images this run built. Both Coolify Image apps
+      # pull `:live`, so this decides which build the deploy below starts.
+      # It uses this job's own GITHUB_TOKEN (`packages: write`); no Coolify
+      # credential is involved. A rollback is the same step with an older sha.
+      - name: Promote this commit's images to :live
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for half in server client; do
+            image="ghcr.io/${{ github.repository_owner }}/asteroid-game-$half"
+            docker buildx imagetools create --tag "$image:live" "$image:sha-${{ github.sha }}"
+            echo "promoted $image:sha-${{ github.sha }} to :live"
+          done
+
       # Tell Coolify to deploy. There is no Coolify API token here: each
       # app has its own webhook secret (hatchkit mints it), and a `push`
       # payload signed with it queues a deploy of that one app — it can
