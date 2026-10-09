@@ -26,6 +26,8 @@ pnpm dev:fixed    # Client on 5173, server on 9777
 pnpm dev:lan      # Fixed ports, accessible from LAN (mobile testing)
 ```
 
+Debug tools (collision outlines, netcode overlay) only exist in dev builds. Open the dev URL with `?debug=1` to show their toggles in Options; the choice is remembered until `?debug=0`.
+
 ## Deployment
 
 The project ships with Docker support and a GitHub Actions workflow that builds images to GHCR.

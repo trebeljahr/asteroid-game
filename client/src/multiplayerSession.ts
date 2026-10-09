@@ -59,11 +59,7 @@ import {
 } from "../../shared/src";
 import { getOrCreateDeviceToken, recordLocalUnlock } from "./account";
 import { playSound } from "./audio";
-import {
-  drawCollisionCircle,
-  drawShipCollisionBox,
-  isCollisionDebugAvailable,
-} from "./collisionDebug";
+import { drawCollisionCircle, drawShipCollisionBox, isDebugToolsEnabled } from "./collisionDebug";
 import { ExplosionSystem } from "./explosions";
 import { type GameState, gameStateMachine, getGameState } from "./gameState";
 import { showMultiplayerResult } from "./gameUiActions";
@@ -1470,7 +1466,7 @@ class MultiplayerClientSession {
       );
     }
 
-    if (getGameState().settings.collisionDebugEnabled && isCollisionDebugAvailable()) {
+    if (getGameState().settings.collisionDebugEnabled && isDebugToolsEnabled()) {
       this.drawCollisionDebug(
         p,
         renderedPlayers,
@@ -1493,7 +1489,7 @@ class MultiplayerClientSession {
       match.arena,
     );
 
-    if (getGameState().settings.netcodeDebugEnabled && isCollisionDebugAvailable()) {
+    if (getGameState().settings.netcodeDebugEnabled && isDebugToolsEnabled()) {
       this.drawNetcodeDebugOverlay(p, match);
     }
   }

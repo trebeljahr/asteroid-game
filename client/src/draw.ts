@@ -9,7 +9,7 @@ import {
   drawCollisionCircle,
   drawCollisionShapeDebug,
   drawShipCollisionBox,
-  isCollisionDebugAvailable,
+  isDebugToolsEnabled,
 } from "./collisionDebug";
 import { explosions } from "./explosions";
 import { type GameMode, getGameState, shouldAdvanceRunSimulation } from "./gameState";
@@ -62,7 +62,7 @@ export const draw = (p: p5) => {
     p.noStroke();
     player.run();
     gameLogic(cameraBounds);
-    if (state.settings.collisionDebugEnabled && isCollisionDebugAvailable()) {
+    if (state.settings.collisionDebugEnabled && isDebugToolsEnabled()) {
       drawRunCollisionDebug(p);
     }
     p.pop();

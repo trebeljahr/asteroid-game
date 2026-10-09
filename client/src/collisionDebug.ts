@@ -8,12 +8,32 @@ import {
   type TransformedCollisionShape,
 } from "../../shared/src";
 
-const LOCAL_DEBUG_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
+const DEBUG_TOOLS_STORAGE_KEY = "simple-asteroid-game-debug-tools";
 
-export const isCollisionDebugAvailable = () => {
-  const hostName = window.location.hostname;
-  return LOCAL_DEBUG_HOSTNAMES.has(hostName) || hostName.endsWith(".localhost");
+// Debug tools (collision outlines, netcode overlay) exist only in dev builds,
+// and only after opting in with `?debug=1`. The choice is remembered in
+// localStorage until `?debug=0`.
+const readDebugToolsFlag = () => {
+  if (!import.meta.env.DEV) {
+    return false;
+  }
+
+  const queryValue = new URLSearchParams(window.location.search).get("debug");
+  try {
+    if (queryValue === "1" || queryValue === "true") {
+      window.localStorage.setItem(DEBUG_TOOLS_STORAGE_KEY, "true");
+    } else if (queryValue === "0" || queryValue === "false") {
+      window.localStorage.removeItem(DEBUG_TOOLS_STORAGE_KEY);
+    }
+    return window.localStorage.getItem(DEBUG_TOOLS_STORAGE_KEY) === "true";
+  } catch (_error) {
+    return queryValue === "1" || queryValue === "true";
+  }
 };
+
+const debugToolsEnabled = readDebugToolsFlag();
+
+export const isDebugToolsEnabled = () => debugToolsEnabled;
 
 const applyBroadPhaseStyle = (p: p5) => {
   p.stroke(255, 72, 72, 235);

@@ -3,7 +3,7 @@ import {
   MULTIPLAYER_SHIP_VARIANTS,
   type ShipVariant,
 } from "../../shared/src";
-import { isCollisionDebugAvailable } from "./collisionDebug";
+import { isDebugToolsEnabled } from "./collisionDebug";
 
 export type GameMode = "singleplayer" | "multiplayer" | "battle-royale" | "horde";
 
@@ -117,7 +117,7 @@ const writeShipVariantSetting = (shipVariant: ShipVariant) => {
 };
 
 const readCollisionDebugSetting = () => {
-  if (!isCollisionDebugAvailable()) {
+  if (!isDebugToolsEnabled()) {
     return false;
   }
 
@@ -129,7 +129,7 @@ const readCollisionDebugSetting = () => {
 };
 
 const writeCollisionDebugSetting = (collisionDebugEnabled: boolean) => {
-  if (!isCollisionDebugAvailable()) {
+  if (!isDebugToolsEnabled()) {
     return;
   }
 
@@ -141,7 +141,7 @@ const writeCollisionDebugSetting = (collisionDebugEnabled: boolean) => {
 };
 
 const readNetcodeDebugSetting = () => {
-  if (!isCollisionDebugAvailable()) {
+  if (!isDebugToolsEnabled()) {
     return false;
   }
 
@@ -153,7 +153,7 @@ const readNetcodeDebugSetting = () => {
 };
 
 const writeNetcodeDebugSetting = (netcodeDebugEnabled: boolean) => {
-  if (!isCollisionDebugAvailable()) {
+  if (!isDebugToolsEnabled()) {
     return;
   }
 
@@ -309,7 +309,7 @@ const transitionState = (currentState: GameState, event: GameStateEvent): GameSt
         settings: currentState.settings,
       };
     case "TOGGLE_COLLISION_DEBUG":
-      if (!isCollisionDebugAvailable()) {
+      if (!isDebugToolsEnabled()) {
         return currentState;
       }
       return {
@@ -321,7 +321,7 @@ const transitionState = (currentState: GameState, event: GameStateEvent): GameSt
         },
       };
     case "TOGGLE_NETCODE_DEBUG":
-      if (!isCollisionDebugAvailable()) {
+      if (!isDebugToolsEnabled()) {
         return currentState;
       }
       return {

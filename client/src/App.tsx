@@ -9,7 +9,7 @@ import {
   subscribeToAccount,
 } from "./account";
 import { playSound } from "./audio";
-import { isCollisionDebugAvailable } from "./collisionDebug";
+import { isDebugToolsEnabled } from "./collisionDebug";
 import { DONATE_URL } from "./donation";
 import { isFullscreenActive, isFullscreenAvailable, toggleFullscreenMode } from "./fullscreen";
 import { activateGameMode, restartCurrentMode } from "./gameModeActions";
@@ -193,7 +193,7 @@ const OptionsPanel: React.FC<{ state: GameState }> = ({ state }) => {
             onClick={fullscreen.toggle}
           />
         )}
-        {isCollisionDebugAvailable() && (
+        {isDebugToolsEnabled() && (
           <ActionButton
             label={
               state.settings.collisionDebugEnabled ? "Collision Debug: On" : "Collision Debug: Off"
@@ -201,7 +201,7 @@ const OptionsPanel: React.FC<{ state: GameState }> = ({ state }) => {
             onClick={toggleCollisionDebug}
           />
         )}
-        {isCollisionDebugAvailable() && (
+        {isDebugToolsEnabled() && (
           <ActionButton
             label={state.settings.netcodeDebugEnabled ? "Netcode Debug: On" : "Netcode Debug: Off"}
             onClick={toggleNetcodeDebug}
