@@ -21,17 +21,20 @@ The implementation is based on well-established patterns from the game networkin
 Browser (Client)                          Server (Node.js)
 ┌─────────────────────┐                   ┌─────────────────────┐
 │                     │                   │                     │
-│  Input (keyboard)   │                   │  Authoritative      │
+│  Input (keys, touch)│                   │  Authoritative      │
 │       │             │   Socket.io       │  Game State         │
-│       v             │                   │       │             │
-│  Prediction Tick ───┼──── input ───────>│  Server Tick Loop   │
-│  Loop (16.67ms)     │    (throttled)    │  (16.67ms)          │
+│       v             │   (WebSocket)     │       │             │
+│  Prediction tick ───┼──── input ───────>│  Input buffer       │
+│  (60 per second)    │   (every tick)    │  (per player)       │
 │       │             │                   │       │             │
 │       v             │                   │       v             │
-│  Predicted State    │<── snapshot ──────│  Broadcast Snapshot  │
-│       │             │    (every 2       │  (every 2 ticks)    │
-│       v             │     ticks)        │                     │
-│  Reconciliation     │                   │                     │
+│  Predicted ship     │                   │  Server tick        │
+│       │             │                   │  (60 per second)    │
+│       v             │                   │       │             │
+│  Reconciliation  <──┼──── snapshot ─────│  Snapshot           │
+│       │             │   (every 2 ticks) │  (every 2 ticks)    │
+│       v             │                   │                     │
+│  Server timeline    │                   │                     │
 │       │             │                   │                     │
 │       v             │                   │                     │
 │  Render (rAF)       │                   │                     │
@@ -39,18 +42,32 @@ Browser (Client)                          Server (Node.js)
 └─────────────────────┘                   └─────────────────────┘
 ```
 
+Three rules hold the design together:
+
+1. **One input, one ship step.** The client steps its ship once per input it sends. The server steps that ship once per input it receives, and never on its own. Both sides therefore run the same steps, and the server confirms the predicted ship instead of correcting it.
+2. **One world step per server tick.** Bullets, collisions and spawns follow the server clock alone. No player's packets can speed them up or slow them down.
+3. **Draw on a clock, not on packet arrival.** Packets arrive unevenly. Everything on screen is placed by a steady clock, so a late packet does not become a jump.
+
 ### Server Authority
 
-The server is the single source of truth for all game state. It runs a fixed-rate simulation at 60 ticks per second (`TICK_INTERVAL_MS = 1000/60 ≈ 16.67ms`). Every tick:
+The server is the single source of truth for all game state. It runs the simulation at 60 ticks per second (`TICK_INTERVAL_MS = 1000/60 ≈ 16.67ms`). Every tick:
 
-1. Applies each player's latest input to their state via `stepPlayerState()`
-2. Advances bullet positions and checks collisions
-3. Spawns/removes asteroids, ammo, and health pickups
-4. Checks win/loss conditions
+1. Each ship consumes its due inputs from that player's input buffer, one `stepPlayerState()` per input
+2. Bullets advance one step and collisions are checked
+3. Asteroids, ammo and health pickups spawn or disappear
+4. Win and loss conditions are checked
 
-Every 2 ticks (~33ms), the server broadcasts a `match:snapshot` to both players containing the full authoritative state of all players and bullets.
+Every 2 ticks (~33ms), the server broadcasts a `match:snapshot` with the authoritative state of all players and bullets. Each snapshot carries `sequence`, the server tick it describes.
 
-**File:** `server/src/multiplayerService.ts` — `tickMatches()` method
+**Files:** `server/src/realtime/matchHost.ts` — tick loop and `playerStepsForTick()`; `server/src/multiplayerService.ts` and `server/src/battleRoyaleService.ts` — `stepActive()`
+
+### The tick rate has to be real
+
+`setInterval(1000 / 60)` does not run 60 times per second. Browsers round the delay down to 16 ms (62.5 Hz). Node rounds it up and adds the time each callback starts late. A client and a server that both "tick at 16.67 ms" then run at different speeds, and the faster one produces inputs or ticks the other cannot match.
+
+Both sides use `FixedStepClock` instead. It counts elapsed time and returns the number of ticks that became due, so the rate is exact on average however unevenly the timer fires. After a stall it runs a bounded number of catch-up ticks and drops the rest.
+
+**File:** `shared/src/fixedTimestep.ts`
 
 ### The Latency Problem
 
@@ -65,19 +82,17 @@ Without any client-side tricks, the flow for a player pressing "thrust" would be
 
 ## Client-Side Prediction
 
-The solution is to **predict locally** — run the same physics simulation on the client so the player sees immediate feedback, then correct when the server's authoritative state arrives.
+The solution is to **predict locally** — run the same physics simulation on the client so the player sees immediate feedback, then check it against the server's authoritative state.
 
-### The Prediction Tick Loop
+### The Prediction Tick
 
-The client runs its own fixed-rate simulation at the same tick rate as the server (16.67ms), using `setInterval`. This is critical — the client and server must tick at the same rate for reconciliation to work.
-
-Each tick of the prediction loop:
+Each prediction tick:
 
 1. Reads the current input state (keyboard/touch)
 2. Assigns an incrementing sequence number (`inputSeq`)
 3. Buffers the input (for reconciliation replay later)
 4. Steps the local physics: `stepPlayerState(predictedSelf, input, arena)`
-5. Sends the input to the server (throttled to avoid flooding)
+5. Sends the input to the server
 
 ```typescript
 private predictionTick() {
@@ -98,33 +113,39 @@ private predictionTick() {
   // Step local prediction
   stepPlayerState(this.predictedSelf, currentInput, match.arena);
 
-  // Send to server (throttled)
-  if (inputChanged || timerElapsed) {
-    this.socket.emit("match:input", currentInput);
-  }
+  // Every tick's input goes to the server: one input, one ship step.
+  this.socket.emit("match:input", currentInput);
 }
 ```
 
-**File:** `client/src/multiplayerSession.ts` — `predictionTick()` method
+`pumpPrediction()` decides how many ticks are due. It runs from a short timer and from the draw loop, and both ask the same `FixedStepClock`. The timer keeps inputs flowing while the display is slow or the tab is hidden. The draw loop makes a due tick run right before its frame.
 
-### Why Fixed Tick Rate Matters
+**File:** `client/src/multiplayerSession.ts` — `pumpPrediction()`, `predictionTick()`
 
-Earlier attempts used the render frame rate (requestAnimationFrame, ~60fps but variable) for stepping physics. This failed because:
+## The Server's Input Buffer
 
-- The client might step 63 times between two server snapshots
-- The server stepped exactly 60 times in the same period
-- On reconciliation, replaying the input buffer produced a different number of steps
-- The predicted position snapped backward, creating visible jitter
+The network delivers inputs unevenly: none on one tick, two on the next. If the server applied them as they arrive, the ship would stutter on every other player's screen. If it repeated the last input when none arrived, it would make a step the client never predicted, and the client would be corrected.
 
-With a fixed `setInterval` at the same rate as the server, both sides step physics the same number of times for the same time period.
+So each player's queue works as a jitter buffer. The ship takes one input per tick, and the few inputs left waiting cover the ticks on which nothing arrives. The buffer finds its own depth:
 
-### Rendering
+| Situation | What the server does |
+|-----------|----------------------|
+| An input is waiting | The ship takes one and steps once |
+| Nothing is waiting | The ship pauses for one tick. From then on one more input stays in the buffer |
+| The buffer stayed deeper than the jitter needed for a second | The ship takes one extra input, which removes one tick of delay |
+| A stall left a backlog | The ship takes up to 3 inputs per tick until at most 4 wait |
+| Inputs arrive faster than real time | The surplus is discarded and acknowledged |
+| No input for half a second, or the player is disconnected | The ship drifts with neutral controls |
 
-The render loop (`draw()`, called by p5.js via requestAnimationFrame) simply reads `predictedSelf` and draws it. No extrapolation, no interpolation — the tick loop at 60fps keeps the predicted state current enough that the render loop always has a recent position to draw.
+The last-but-one row is the speed limit. A ship earns 1.05 inputs per server tick and can save up 30. A client that sends inputs faster gains nothing: the server discards what the budget does not cover and reports the discarded sequence number, so the client stops predicting those steps.
+
+The buffer adds delay only to what other players see of this ship, and only as much as the connection's jitter requires: nothing on a steady link, up to 4 ticks (67ms) on a rough one. The player's own ship is predicted and does not wait for it.
+
+**File:** `server/src/realtime/inputPacing.ts` — `takeInputsForTick()`
 
 ## Server Reconciliation
 
-When a server snapshot arrives, the client must reconcile its prediction with the authoritative state. This is where the input buffer and sequence numbers come in.
+When a server snapshot arrives, the client checks its prediction against the authoritative state. This is where the input buffer and sequence numbers come in.
 
 ### Sequence Numbers
 
@@ -151,78 +172,87 @@ export interface MatchPlayerSnapshot {
 
 When a snapshot arrives with the server's authoritative state for the local player:
 
-1. **Accept the server state** as the new base: `predictedSelf = serverState`
+1. **Accept the server state** as the new base
 2. **Discard acknowledged inputs**: remove all buffered inputs with `seq <= lastInputSeq`
-3. **Replay unacknowledged inputs**: step `predictedSelf` forward once per remaining buffer entry
+3. **Replay unacknowledged inputs**: step the ship forward once per remaining buffer entry
 
 ```typescript
-private reconcilePredictedSelf(serverState, arena) {
-  // 1. Accept server state
-  this.predictedSelf = { ...serverState, fireCooldownTicks: 0 };
+// client/src/netcode/reconcile.ts
+export const replayPendingInputs = (serverState, pending, arena) => {
+  const state = { ...serverState, fireCooldownTicks: 0 };
+  const unconfirmed = pending.filter((entry) => entry.seq > serverState.lastInputSeq);
 
-  // 2. Discard acknowledged inputs
-  this.inputBuffer = this.inputBuffer.filter(
-    (entry) => entry.seq > serverState.lastInputSeq
-  );
-
-  // 3. Replay unacknowledged inputs
-  for (const entry of this.inputBuffer) {
-    if (this.predictedSelf.health > 0) {
-      stepPlayerState(this.predictedSelf, entry.input, arena);
-    }
+  for (const entry of unconfirmed) {
+    stepPlayerState(state, entry.input, arena);
   }
-}
+
+  return { state, pending: unconfirmed /* ... */ };
+};
 ```
 
 ### Why This Works
 
-After reconciliation, the predicted state represents: "where the server says I am" + "the effect of inputs the server hasn't processed yet." This is exactly where the player should be rendered.
+After reconciliation, the predicted state represents: "where the server says I am" + "the effect of inputs the server hasn't processed yet."
 
-If the client's prediction was perfect (same physics, same input timing), the reconciled position matches where `predictedSelf` already was — no visible change. If there was a discrepancy (collision with another player, server-side event), the position corrects smoothly because it only jumps by the delta between predicted and actual, which is typically small.
+The server made exactly one step per acknowledged input, so the replay lands on the ship the client had already predicted. In the simulated duel the correction is zero at every snapshot, on a 5ms link and on an 80ms link with 30ms of jitter. A real correction happens only when the server knows something the client could not: a collision with another ship, or inputs it discarded.
 
 ### What the Server Tracks
 
-The server stores the latest `inputSeq` it received from each player:
+A ship's `lastInputSeq` is the highest input the server applied or discarded for it:
 
 ```typescript
-// server/src/multiplayerService.ts
-private updatePlayerInput(socketId: string, payload: ShipInputState) {
-  // ...
-  participant.input = payload;
-  participant.state.lastInputSeq = payload.inputSeq;
-}
+// server, once per ship step
+participant.input = input;
+participant.state.lastInputSeq = Math.max(participant.state.lastInputSeq, input.inputSeq);
+stepPlayerState(participant.state, participant.input, arena);
 ```
 
-This `lastInputSeq` is included in every snapshot via `snapshotPlayerState()`, telling the client "I've processed your inputs up to this number."
+`snapshotPlayerState()` copies it into every snapshot, telling the client "I've processed your inputs up to this number."
 
-## Entity Interpolation (Opponent)
+## Rendering
 
-The opponent player is **not** predicted — the client doesn't know what inputs they're pressing. Instead, the opponent is rendered using **extrapolation** from the last server snapshot:
+The simulation moves in ticks and the network delivers in bursts. The screen must show neither.
 
-```typescript
-const opponentPlayer = projectPlayerSnapshot(
-  opponentSnapshot, predictedTicks, match.arena
-);
-```
+### The Player's Own Ship
 
-`projectPlayerSnapshot` linearly extends the opponent's position using their velocity: `position + velocity * ticks`. This covers the gap between snapshots (~33ms) and network latency.
+`RenderSmoother` does two things for the predicted ship:
 
-**File:** `shared/src/multiplayerCore.ts` — `projectPlayerSnapshot()`
+- **Between ticks.** A display does not refresh in step with the simulation. Some frames would show no new tick and others two, which reads as stutter, and the camera follows the ship, so the whole world would stutter with it. The ship is drawn between its last two tick positions, by how far the clock is into the next tick.
+- **After a correction.** When reconciliation does move the ship, the drawn ship stays where it was and the difference fades out with a 60ms half-life. A difference above 260px is a real teleport and is shown as one.
 
-## Network Optimization
+The simulation always holds the corrected state. Only the drawing is smoothed.
 
-### Throttled Sends
+**File:** `client/src/netcode/renderSmoother.ts`
 
-The prediction tick loop runs at 60fps, but not every tick needs to send input over the network. The client throttles sends:
+### Other Ships
 
-- **On input change** (key down/up): send immediately
-- **Heartbeat**: send at least every `LOCAL_INPUT_PUSH_INTERVAL_MS` (33ms) even if unchanged
+The client does not know what other players are pressing, so it cannot predict them. It draws them from snapshots, and the question is which moment to draw.
 
-Between sends, the server continues using the last received input — since input is boolean states (thrust on/off), not deltas, this is correct.
+`ServerTimeline` estimates a steady server clock from the fastest recent snapshot arrivals. It then draws a moment slightly behind that clock: one snapshot interval, plus as much as the measured jitter needs (33ms on a steady link, at most 100ms). Two snapshots usually surround that moment, so a remote ship moves between positions the server really reported. When the newest snapshot is older than the drawn moment, the ship is projected forward along its velocity for up to 8 ticks and then holds.
+
+The clock never jumps. When the estimate changes, the timeline runs up to 10% fast or slow until it has caught up.
+
+**Files:** `client/src/netcode/serverTimeline.ts`, `client/src/netcode/remoteEntities.ts` — `sampleRemotePlayers()`
+
+### Bullets
+
+Bullets fly in a straight line, so projecting the newest snapshot forward is exact. They are drawn at the current server tick, with no interpolation delay.
+
+**File:** `client/src/netcode/remoteEntities.ts` — `sampleBullets()`
+
+## Network Notes
+
+### One Input per Tick
+
+The client sends every tick's input, about 60 small messages per second. Sending only on change would break the first rule: the server could no longer tell how many steps the client made.
 
 ### Snapshot Rate
 
-The server sends snapshots every 2 ticks (~33ms, 30 snapshots/second) rather than every tick. This halves bandwidth while the client's prediction loop fills the gaps.
+The server sends snapshots every 2 ticks (~33ms, 30 snapshots/second) rather than every tick. This halves bandwidth. Prediction fills the gaps for the player's own ship and the timeline fills them for everything else.
+
+### WebSocket Means TCP
+
+A lost packet stalls everything behind it until it is sent again, often for 200ms or more. Then the queued messages arrive together. The design expects this: the input buffer works a backlog off within its budget, and the timeline carries remote ships forward for a moment and then holds them.
 
 ## Physics Determinism
 
@@ -308,30 +338,78 @@ The client only predicts its own **movement** (position, velocity, angle). These
 - Match phase transitions
 - Other player's state
 
+## Measuring It
+
+Feel is hard to argue about, so the netcode is measured.
+
+`server/test/netcodeHarness.ts` plays a duel in virtual time: the real server simulation, two clients built from the real client netcode modules, and a simulated network with latency, jitter and stalls. Timers and the clock are mocked, so a run is exact and repeatable on any machine. It reports what a player would see:
+
+- how far the server moved the predicted ship at each snapshot
+- how far each drawn frame strays from steady motion, for the own ship and for the opponent
+- how many inputs the server applied to a ship per snapshot
+
+`server/test/duelNetcode.test.ts` turns those into requirements. The numbers below are one pilot's view of a 20-second duel over a link with 40ms latency each way and 0 to 15ms of jitter, both ships circling at about 4px per tick:
+
+| | Before these rules | Now |
+|---|---|---|
+| Server corrections of the own ship above 0.5px | 14.7 per second, up to 18.7px | none |
+| Own-ship frames more than 1px off steady motion | 16.7 per second | none |
+| Opponent frames more than 1px off steady motion | 23.1 per second | none (largest 0.82px) |
+| Inputs applied per snapshot interval (2 is even) | 1, 2 or 3 | always 2 |
+
+For a look at a live match, dev builds have two tools, both opt-in with `?debug=1`:
+
+- The netcode overlay (Settings → Netcode Debug) graphs the correction distance, the input buffer and the server queue depth.
+- `?debug=1&lag=60&jitter=20` delays this client's inputs and everything it receives by 60ms plus up to 20ms, each way. Two windows on one machine then behave like two players on a real network.
+
 ## Common Pitfalls (Lessons Learned)
 
-### 1. Don't step at the render frame rate
+### 1. Don't trust a timer for the tick rate
 
-Stepping physics in `requestAnimationFrame` (variable rate) while buffering at a fixed rate creates a mismatch during reconciliation replay. Always use a fixed-rate simulation loop.
+`setInterval(1000 / 60)` runs at 62.5 Hz in a browser and below 60 Hz in Node. Count elapsed time and derive the ticks from it.
 
-### 2. Don't override velocity from server
+### 2. Don't step at the render frame rate
 
-Snapping velocity to the server value every snapshot creates oscillation — the local simulation applies thrust/drag and gets one velocity, then the server overrides it, then next frame local simulation diverges again.
+Stepping physics once per `requestAnimationFrame` ties the simulation to the display: a 144 Hz screen would fly the ship 2.4 times as fast as a 60 Hz one. Run fixed ticks and draw between them.
 
-### 3. Don't blend/interpolate predicted position toward server
+### 3. Don't let input arrival drive the world
 
-Blending approaches (lerp 30% toward server each snapshot) fight with the prediction and create micro-jitter. The Valve/Gambetta approach of "accept + replay" produces cleaner results.
+An earlier version ran one full world step per queued input, to drain bursts. One player's bunched packets then moved the other ship and every bullet several steps in one tick, and the whole match ran at the speed of the fastest sender.
 
-### 4. Buffer every tick, not every send
+### 4. Don't repeat the last input when none arrived
 
-If you only buffer inputs when they're sent over the network (e.g., every 33ms), but the simulation ticks at 16.67ms, reconciliation replays fewer steps than the prediction accumulated. This causes snaps backward.
+It looks harmless, but it is a ship step the client never made. When the late input arrives the server steps again, the ship is one step ahead of the prediction, and the client is corrected. Let the ship wait and let the input buffer absorb the jitter.
+
+### 5. Don't blend the simulation toward the server
+
+Blending the predicted state itself (lerp 30% toward the server each snapshot) fights the prediction and creates micro-jitter. Accept the server state and replay. Smoothing belongs in the drawing only, where it cannot feed back into the simulation.
+
+### 6. Don't override velocity from the server without replaying
+
+Snapping velocity to the server value every snapshot creates oscillation: the local simulation applies thrust and drag and gets one velocity, the server overrides it with an older one, and the next tick diverges again.
+
+### 7. Buffer every tick, not every send
+
+If you only buffer inputs when they are sent, but the simulation ticks more often, reconciliation replays fewer steps than the prediction made. This causes snaps backward.
+
+### 8. Don't place remote things by packet arrival time
+
+Projecting a ship forward from the moment its snapshot arrived turns every late or early packet into a jump. Place it by the server tick the snapshot carries.
 
 ## File Reference
 
 | File | Role |
 |------|------|
 | `shared/src/multiplayerCore.ts` | Physics, types, constants shared between client and server |
-| `server/src/multiplayerService.ts` | Authoritative game simulation, snapshot broadcasting |
-| `client/src/multiplayerSession.ts` | Prediction tick loop, reconciliation, rendering |
+| `shared/src/fixedTimestep.ts` | The clock that turns elapsed time into ticks |
+| `server/src/realtime/matchHost.ts` | Server tick loop, seats, which ship steps are due |
+| `server/src/realtime/inputPacing.ts` | Per-player input buffer and speed limit |
+| `server/src/multiplayerService.ts` | Authoritative duel simulation, snapshot broadcasting |
+| `client/src/multiplayerSession.ts` | Socket handling, prediction tick, drawing |
+| `client/src/netcode/reconcile.ts` | Replay of unconfirmed inputs |
+| `client/src/netcode/renderSmoother.ts` | Smooth drawing of the predicted ship |
+| `client/src/netcode/serverTimeline.ts` | Which server moment to draw |
+| `client/src/netcode/remoteEntities.ts` | Other ships and bullets at that moment |
 | `client/src/input.ts` | Keyboard/touch/pointer input capture |
 | `client/src/weaponEffects.ts` | Client-only shot visuals |
+| `server/test/netcodeHarness.ts` | The simulated duel used to measure all of this |
