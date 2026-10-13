@@ -56,6 +56,7 @@ import {
 } from "../../shared/src";
 import type { MatchResultEntry } from "./achievementService";
 import { hashResumeToken, newMatchId, newPlayerId, newResumeToken } from "./realtime/ids";
+import { createInputPacing } from "./realtime/inputPacing";
 import {
   baseSnapshotSchema,
   type HostContext,
@@ -119,6 +120,7 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
       return {
         detachedAt: null,
         input: createEmptyInputState(),
+        inputPacing: createInputPacing(),
         inputQueue: [],
         playerId,
         replicaId: ticket.replicaId,
@@ -289,31 +291,18 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
     // World spawns are time-based — run once per real tick.
     this.updateWorldSpawns(match, worldEvents);
 
-    // Run sub-steps to drain each player's input queue.  On a good
-    // connection this is 1 step.  On high latency, inputs arrive in
-    // bursts and we need to step the FULL simulation (players +
-    // bullets + collisions) for each queued input so that collision
-    // detection stays synchronised with intermediate positions.
-    const subSteps = Math.max(
-      1,
-      match.players[0].inputQueue.length,
-      match.players[1].inputQueue.length,
-    );
-    for (let subStep = 0; subStep < subSteps; subStep++) {
-      this.stepPlayersOnce(match);
-      this.handlePlayerShipCollision(match, playerDamageById);
-      this.handlePlayerAsteroidCollisions(match, playerDamageById, worldEvents);
-      this.handleBulletCollisions(match, playerDamageById, asteroidDamageById);
-      this.applyAsteroidDamage(match, asteroidDamageById, worldEvents);
-      this.applyHeartCollections(match, healingByPlayerId, worldEvents);
-      this.applyAmmoCollections(match, worldEvents);
-      this.applyPlayerDamageAndHealing(match, playerDamageById, healingByPlayerId);
-
-      // Reset per-step accumulators for the next sub-step.
-      playerDamageById.clear();
-      healingByPlayerId.clear();
-      asteroidDamageById.clear();
-    }
+    // The world advances exactly one step per server tick. Only the
+    // ships follow their players' inputs, each at its own pace: one
+    // player's late or bunched packets must not move the other ship or
+    // the bullets.
+    this.stepPlayers(match);
+    this.handlePlayerShipCollision(match, playerDamageById);
+    this.handlePlayerAsteroidCollisions(match, playerDamageById, worldEvents);
+    this.handleBulletCollisions(match, playerDamageById, asteroidDamageById);
+    this.applyAsteroidDamage(match, asteroidDamageById, worldEvents);
+    this.applyHeartCollections(match, healingByPlayerId, worldEvents);
+    this.applyAmmoCollections(match, worldEvents);
+    this.applyPlayerDamageAndHealing(match, playerDamageById, healingByPlayerId);
 
     if (this.hasMeaningfulActivity(match, previousStates, previousBulletCount)) {
       match.lastActivityAt = Date.now();
@@ -806,18 +795,18 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
     });
   }
 
-  private stepPlayersOnce(match: DuelMatch) {
-    for (let playerIndex = 0; playerIndex < match.players.length; playerIndex++) {
-      const participant = match.players[playerIndex];
+  private stepPlayers(match: DuelMatch) {
+    const steps = this.playerStepsForTick(match);
+    for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
+      const participant = steps[stepIndex].participant;
 
-      // Pop one input from the queue (if available), or reuse the last
-      // applied input.  The caller runs this in a sub-step loop so that
-      // all queued inputs are consumed — one physics step per input,
-      // matching the client's prediction tick count.
-      if (participant.inputQueue.length > 0) {
-        participant.input = participant.inputQueue.shift()!;
-        participant.state.lastInputSeq = participant.input.inputSeq;
-      }
+      // One physics step per input, matching the client's prediction
+      // tick for tick. A drift step carries sequence 0 and confirms nothing.
+      participant.input = steps[stepIndex].input;
+      participant.state.lastInputSeq = Math.max(
+        participant.state.lastInputSeq,
+        participant.input.inputSeq,
+      );
 
       stepPlayerState(participant.state, participant.input, MULTIPLAYER_ARENA);
 

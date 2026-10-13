@@ -19,6 +19,7 @@ import {
   createInitialBattleRoyaleWorld,
   createInitialMatchWorld,
   FIRE_COOLDOWN_TICKS,
+  FixedStepClock,
   getAmmoPacketsInBounds,
   getAsteroidsInBounds,
   getHeartsInBounds,
@@ -46,8 +47,6 @@ import {
   PLAYER_MAX_AMMO,
   PLAYER_MAX_HEALTH,
   type PlayerSlot,
-  projectBulletSnapshot,
-  projectPlayerSnapshot,
   type RuntimePlayerState,
   removeAmmoFromWorld,
   removeAsteroidFromWorld,
@@ -77,6 +76,11 @@ import {
   isMobileDevice,
   isShipActionActive,
 } from "./input";
+import { createSimulatedLink } from "./netcode/delayLine";
+import { replayPendingInputs } from "./netcode/reconcile";
+import { sampleBullets, sampleRemotePlayers } from "./netcode/remoteEntities";
+import { RenderSmoother } from "./netcode/renderSmoother";
+import { ServerTimeline } from "./netcode/serverTimeline";
 import { ShipDebrisSystem } from "./shipDebris";
 import { assets } from "./sketch";
 import { recordMultiplayerResult } from "./stats";
@@ -139,7 +143,10 @@ interface MultiplayerViewState {
   battleRoyaleLobby: BattleRoyaleLobbyState | null;
 }
 
-const SNAPSHOT_TICK_MS = 1000 / 60;
+/** How often a timer checks for due prediction ticks, besides every frame. */
+const PREDICTION_PUMP_INTERVAL_MS = 8;
+/** Prediction ticks run at once after the page stalls. Missed time beyond that is dropped. */
+const MAX_PREDICTION_CATCH_UP_TICKS = 6;
 /** How long the client keeps trying to resume before it gives the match up. */
 const RESUME_DEADLINE_MS = 45_000;
 const RESUME_RETRY_MS = 500;
@@ -353,6 +360,10 @@ class MultiplayerClientSession {
   private resumeInFlight = false;
   private resumeTimeouts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private selfSmoother = new RenderSmoother();
+  private simulatedLink = createSimulatedLink(isDebugToolsEnabled());
+  private tickClock = new FixedStepClock(TICK_INTERVAL_MS, MAX_PREDICTION_CATCH_UP_TICKS);
+  private timeline = new ServerTimeline<MatchSnapshotPayload>();
   private thrusters = new Map<string, ThrusterExhaustSystem>();
   private viewState = createInitialViewState();
   private weaponEffects: WeaponEffectsSystem | null = null;
@@ -731,6 +742,7 @@ class MultiplayerClientSession {
       const now = performance.now();
       this.viewState.match.snapshot = adaptedSnapshot;
       this.viewState.match.snapshotReceivedAt = now;
+      this.timeline.observe(adaptedSnapshot.sequence, adaptedSnapshot, now);
       this.viewState.match.survivorsRemaining = payload.survivorsRemaining;
       this.viewState.status = "matched";
 
@@ -858,6 +870,7 @@ class MultiplayerClientSession {
 
       this.viewState.match.snapshot = payload;
       this.viewState.match.snapshotReceivedAt = now;
+      this.timeline.observe(payload.sequence, payload, now);
       this.viewState.status = "matched";
 
       // Only run prediction and reconciliation during the active phase.
@@ -939,8 +952,38 @@ class MultiplayerClientSession {
       showMultiplayerResult(resultCopy.title, resultCopy.subtitle);
     });
 
+    if (this.simulatedLink.up.active) {
+      this.simulateSlowLink(socket);
+    }
+
     this.socket = socket;
     socket.connect();
+  }
+
+  /**
+   * Development only (`?debug=1&lag=60&jitter=20`): delay the inputs this
+   * socket sends and everything it receives, to feel a real network on
+   * one machine. `onevent` is where socket.io-client hands a received
+   * event to its listeners; it is not part of the public API.
+   */
+  private simulateSlowLink(socket: Socket<ServerToClientEvents, ClientToServerEvents>) {
+    const { down, up } = this.simulatedLink;
+    const raw = socket as unknown as {
+      emit: (...args: unknown[]) => unknown;
+      onevent: (packet: unknown) => void;
+    };
+    const emit = raw.emit.bind(socket);
+    const onevent = raw.onevent.bind(socket);
+    raw.emit = (...args) => {
+      if (args[0] !== "match:input" && args[0] !== "br:input") {
+        return emit(...args);
+      }
+      up.send(() => emit(...args));
+      return socket;
+    };
+    raw.onevent = (packet) => {
+      down.send(() => onevent(packet));
+    };
   }
 
   private createCollisionExplosion(x: number, y: number, extraBursts = 0) {
@@ -1360,27 +1403,23 @@ class MultiplayerClientSession {
       return;
     }
 
-    const predictedTicks = Math.min(
-      4,
-      (performance.now() - match.snapshotReceivedAt) / SNAPSHOT_TICK_MS,
-    );
-    const renderedBullets = match.snapshot.bullets.map((bullet) => {
-      return projectBulletSnapshot(bullet, predictedTicks);
-    });
+    const now = performance.now();
+    this.pumpPrediction(now);
 
-    // Use locally predicted state for self (updated by tick loop),
-    // fall back to server snapshot if prediction hasn't started yet
-    const selfPlayer: MatchPlayerSnapshot | null =
-      this.predictedSelf ??
-      match.snapshot.players.find((player) => player.id === match.playerId) ??
-      null;
+    // Everything remote is placed on the server's clock, not on the time
+    // its packet happened to arrive: bullets at the current server tick,
+    // ships slightly behind it, between two snapshots.
+    const liveTick = this.timeline.liveTick(now);
+    const predictedTicks = liveTick - match.snapshot.sequence;
+    const renderedBullets = sampleBullets(match.snapshot, liveTick);
 
-    const opponentSnapshots = match.snapshot.players.filter(
-      (player) => player.id !== match.playerId,
-    );
-    const opponentPlayers: MatchPlayerSnapshot[] = opponentSnapshots.map((snapshot) =>
-      projectPlayerSnapshot(snapshot, predictedTicks, match.arena),
-    );
+    const selfPlayer = this.getRenderedSelf(match, now);
+
+    const timelineView = this.timeline.view(now);
+    const opponentPlayers: MatchPlayerSnapshot[] =
+      timelineView === null
+        ? match.snapshot.players.filter((player) => player.id !== match.playerId)
+        : sampleRemotePlayers(timelineView, match.playerId, match.arena);
     // For the duel-only radar HUD we still want a single reference
     // opponent. Pick the first alive one (fallback: first entry).
     const primaryOpponent =
@@ -1662,6 +1701,17 @@ class MultiplayerClientSession {
     return x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom;
   }
 
+  /** The local ship as drawn: the predicted ship, moved smoothly between ticks. */
+  private getRenderedSelf(match: ActiveMatchState, now: number): MatchPlayerSnapshot | null {
+    if (this.predictedSelf === null) {
+      // Prediction has not started yet: show the server's ship.
+      return match.snapshot?.players.find((player) => player.id === match.playerId) ?? null;
+    }
+
+    const pose = this.selfSmoother.poseAt(this.tickClock.alphaAt(now), now);
+    return pose === null ? this.predictedSelf : { ...this.predictedSelf, ...pose };
+  }
+
   private drawNetcodeDebugOverlay(p: p5, _match: ActiveMatchState) {
     const history = this.debugHistory;
     if (history.length === 0) {
@@ -1685,6 +1735,8 @@ class MultiplayerClientSession {
       `server queue depth: ${latest.inputQueueDepth === -1 ? "n/a" : latest.inputQueueDepth}`,
       `client inputSeq: ${this.inputSeqCounter}`,
       `snapshot interval: ${latest.snapshotIntervalMs.toFixed(1)} ms`,
+      `input to confirmation: ${(latest.bufferSize * TICK_INTERVAL_MS).toFixed(0)} ms`,
+      `remote ships drawn ${this.timeline.interpolationDelayMs.toFixed(0)} ms behind`,
     ];
     const textBlockH = lines.length * lineH + 4;
 
@@ -2237,11 +2289,14 @@ class MultiplayerClientSession {
     this.pendingShotSeqs = [];
     this.localFireCooldownTicks = 0;
     this.weaponEffects?.forgetAllBullets();
+    this.selfSmoother.reset();
+    this.timeline.reset();
 
     match.world = world;
     match.worldVersion = payload.world.worldVersion;
     match.snapshot = payload.snapshot;
     match.snapshotReceivedAt = performance.now();
+    this.timeline.observe(payload.snapshot.sequence, payload.snapshot, match.snapshotReceivedAt);
     match.survivorsRemaining = payload.survivorsRemaining;
     match.placement = payload.placement ?? match.placement;
     match.migrating = false;
@@ -2513,24 +2568,27 @@ class MultiplayerClientSession {
     serverState: MatchPlayerSnapshot,
     arena: ActiveMatchState["arena"],
   ) {
-    // Accept authoritative server state as base
-    this.predictedSelf = { ...serverState, fireCooldownTicks: 0 };
-
-    // Discard inputs the server has already processed
-    this.inputBuffer = this.inputBuffer.filter((entry) => entry.seq > serverState.lastInputSeq);
+    // Accept the authoritative state, then replay the inputs the server
+    // has not consumed yet. The server steps the ship once per input, so
+    // this lands on the ship already predicted, unless something happened
+    // that the client could not foresee, such as a collision.
+    const reconciled = replayPendingInputs(serverState, this.inputBuffer, arena);
+    this.predictedSelf = reconciled.state;
+    this.inputBuffer = reconciled.pending;
 
     // The server's ammo count does not include shots it has not seen yet.
     this.pendingShotSeqs = this.pendingShotSeqs.filter((seq) => seq > serverState.lastInputSeq);
     this.predictedSelf.ammo = Math.max(0, serverState.ammo - this.pendingShotSeqs.length);
 
-    // Replay unacknowledged inputs on top of server state.
-    // Each buffered entry was produced by one tick of the client
-    // simulation, matching one server tick.
-    for (const entry of this.inputBuffer) {
-      if (this.predictedSelf.health > 0) {
-        stepPlayerState(this.predictedSelf, entry.input, arena);
-      }
-    }
+    // Whatever the correction, the drawn ship does not jump: the smoother
+    // keeps it where it was and blends the difference out.
+    const now = performance.now();
+    this.selfSmoother.rebase(
+      reconciled.beforeLastStep,
+      reconciled.state,
+      this.tickClock.alphaAt(now),
+      now,
+    );
   }
 
   private predictionTick() {
@@ -2700,11 +2758,33 @@ class MultiplayerClientSession {
     playSound("shoot");
   }
 
+  /**
+   * Run every prediction tick that is due. The count comes from elapsed
+   * time, so the client ticks at the server's rate whatever the timer or
+   * display does.
+   */
+  private pumpPrediction(now = performance.now()) {
+    if (this.predictionTickTimer === null) {
+      return;
+    }
+
+    const dueTicks = this.tickClock.advance(now);
+    for (let tick = 0; tick < dueTicks; tick++) {
+      this.predictionTick();
+      if (this.predictedSelf !== null) {
+        this.selfSmoother.advance(this.predictedSelf);
+      }
+    }
+  }
+
   private startPredictionLoop() {
     this.stopPredictionLoop();
+    this.tickClock.reset(performance.now());
+    // The timer keeps inputs flowing while the display is slow or hidden.
+    // The draw loop pumps too, so a due tick runs right before its frame.
     this.predictionTickTimer = setInterval(() => {
-      this.predictionTick();
-    }, TICK_INTERVAL_MS);
+      this.pumpPrediction();
+    }, PREDICTION_PUMP_INTERVAL_MS);
   }
 
   private stopPredictionLoop() {
@@ -2723,6 +2803,8 @@ class MultiplayerClientSession {
     this.predictedSelf = null;
     this.inputBuffer = [];
     this.inputSeqCounter = 0;
+    this.selfSmoother.reset();
+    this.timeline.reset();
     this.debugHistory = [];
     this.ammoHudEffects = [];
     this.cameraKick = { updatedAt: 0, x: 0, y: 0 };

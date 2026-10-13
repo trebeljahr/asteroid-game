@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import type { Server } from "socket.io";
 import { z } from "zod";
 
@@ -9,6 +10,7 @@ import {
   type ClientToServerEvents,
   createEmptyInputState,
   createEmptyMatchWorld,
+  FixedStepClock,
   type MatchMode,
   type MatchPhase,
   type MatchResumedPayload,
@@ -27,6 +29,12 @@ import type { SocketRoute } from "./bus";
 import { RESUME_COUNTDOWN_MS, RESUME_GRACE_MS } from "./config";
 import type { MatchDurability } from "./durability";
 import { resumeTokenMatches } from "./ids";
+import {
+  createInputPacing,
+  INPUT_QUEUE_LIMIT,
+  type InputPacing,
+  takeInputsForTick,
+} from "./inputPacing";
 import type { LeaseFence, StoredSnapshot } from "./store";
 
 export type TypedServer = Server<ClientToServerEvents, ServerToClientEvents>;
@@ -39,6 +47,8 @@ export interface RouteRegistry {
 export interface HostContext {
   durability: MatchDurability;
   io: TypedServer;
+  /** Monotonic clock in milliseconds that paces the simulation. Tests replace it. */
+  now?: () => number;
   replicaId: string;
   routes: RouteRegistry;
 }
@@ -51,6 +61,7 @@ export interface HostContext {
 export interface HostParticipant {
   detachedAt: number | null;
   input: ShipInputState;
+  inputPacing: InputPacing;
   inputQueue: ShipInputState[];
   playerId: string;
   replicaId: string | null;
@@ -59,6 +70,18 @@ export interface HostParticipant {
   state: RuntimePlayerState;
   userId: string | null;
 }
+
+/** One step of one ship, due on the current tick. */
+export interface PlayerStep<P extends HostParticipant> {
+  input: ShipInputState;
+  participant: P;
+}
+
+/**
+ * Ticks run back to back after the event loop stalls, so the simulation
+ * stays on real time. Beyond this many the missed time is dropped.
+ */
+const MAX_CATCH_UP_TICKS = 8;
 
 export interface SpawnDelays {
   ammo: number;
@@ -181,13 +204,33 @@ export abstract class MatchHostBase<P extends HostParticipant, M extends HostMat
   protected matches = new Map<string, M>();
   /** socket.id → seat, for sockets attached to a match this replica owns. */
   protected seats = new Map<string, { matchId: string; playerId: string }>();
-  private tickTimer: NodeJS.Timeout;
+  private readonly now: () => number;
+  private tickClock = new FixedStepClock(TICK_INTERVAL_MS, MAX_CATCH_UP_TICKS);
 
   constructor(protected ctx: HostContext) {
-    this.tickTimer = setInterval(() => {
-      this.tickAll();
-    }, TICK_INTERVAL_MS);
-    this.tickTimer.unref?.();
+    this.now = ctx.now ?? (() => performance.now());
+    this.tickClock.reset(this.now());
+    this.scheduleTicks();
+  }
+
+  /**
+   * Run the simulation at exactly the tick rate on average. A plain
+   * `setInterval(TICK_INTERVAL_MS)` fires late and drifts, which would
+   * leave the server slower than the clients that predict against it.
+   */
+  private scheduleTicks() {
+    const delayMs = Math.max(1, Math.ceil(this.tickClock.msUntilNextStep(this.now())));
+    const timer = setTimeout(() => {
+      try {
+        const dueTicks = this.tickClock.advance(this.now());
+        for (let tick = 0; tick < dueTicks; tick++) {
+          this.tickAll();
+        }
+      } finally {
+        this.scheduleTicks();
+      }
+    }, delayMs);
+    timer.unref?.();
   }
 
   /** One simulation step of an active match. Returns true when the match finished. */
@@ -217,9 +260,10 @@ export abstract class MatchHostBase<P extends HostParticipant, M extends HostMat
   handleInput(matchId: string, socketId: string, input: ShipInputState) {
     const participant = this.participantForSocket(matchId, socketId);
     if (participant === null) return;
-    // Queue the input for ordered, one-per-tick processing.
+    // Queue the input. The tick loop applies queued inputs in order, one
+    // ship step each.
     participant.inputQueue.push(input);
-    if (participant.inputQueue.length > 120) {
+    if (participant.inputQueue.length > INPUT_QUEUE_LIMIT) {
       participant.inputQueue.shift();
     }
   }
@@ -261,6 +305,7 @@ export abstract class MatchHostBase<P extends HostParticipant, M extends HostMat
     participant.replicaId = replicaId;
     participant.detachedAt = null;
     participant.input = createEmptyInputState();
+    participant.inputPacing = createInputPacing();
     participant.inputQueue = [];
     this.seats.set(socketId, { matchId, playerId: participant.playerId });
     this.ctx.io.in(socketId).socketsJoin(match.roomId);
@@ -459,6 +504,7 @@ export abstract class MatchHostBase<P extends HostParticipant, M extends HostMat
     return {
       detachedAt: now,
       input: createEmptyInputState(),
+      inputPacing: createInputPacing(),
       inputQueue: [],
       playerId: snapshot.playerId,
       replicaId: null,
@@ -479,6 +525,39 @@ export abstract class MatchHostBase<P extends HostParticipant, M extends HostMat
       hearts: Array.from(match.world.hearts.values()),
       worldVersion: match.worldVersion,
     };
+  }
+
+  /**
+   * The ship steps due on this tick, in order. A ship steps once for each
+   * input its player sent, so the server makes exactly the steps the
+   * client predicted; a ship whose input has not arrived waits. A ship
+   * nobody is steering (disconnected, or silent for a long time) drifts
+   * with neutral controls instead.
+   */
+  protected playerStepsForTick(match: M): PlayerStep<P>[] {
+    const steps: PlayerStep<P>[] = [];
+    for (const participant of match.players) {
+      if (participant.socketId === null) {
+        steps.push({ input: createEmptyInputState(), participant });
+        continue;
+      }
+
+      const due = takeInputsForTick(participant.inputPacing, participant.inputQueue);
+      if (due.discardedThroughSeq !== null) {
+        // Tell the client these inputs are gone, so it stops predicting them.
+        participant.state.lastInputSeq = Math.max(
+          participant.state.lastInputSeq,
+          due.discardedThroughSeq,
+        );
+      }
+      for (const input of due.apply) {
+        steps.push({ input, participant });
+      }
+      if (due.coast) {
+        steps.push({ input: createEmptyInputState(), participant });
+      }
+    }
+    return steps;
   }
 
   private tickAll() {

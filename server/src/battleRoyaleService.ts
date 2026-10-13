@@ -60,6 +60,7 @@ import {
 } from "../../shared/src";
 import type { MatchResultEntry } from "./achievementService";
 import { hashResumeToken, newMatchId, newPlayerId, newResumeToken } from "./realtime/ids";
+import { createInputPacing } from "./realtime/inputPacing";
 import {
   baseSnapshotSchema,
   type HostContext,
@@ -194,6 +195,7 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
         eliminatedAt: null,
         eliminationPlacement: null,
         input: createEmptyInputState(),
+        inputPacing: createInputPacing(),
         inputQueue: [],
         playerId,
         replicaId: entry.replicaId,
@@ -358,25 +360,17 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
 
     this.updateWorldSpawns(match, worldEvents);
 
-    const maxQueued = match.players.reduce((max, player) => {
-      return Math.max(max, player.inputQueue.length);
-    }, 0);
-    const subSteps = Math.max(1, maxQueued);
-
-    for (let subStep = 0; subStep < subSteps; subStep++) {
-      this.stepPlayersOnce(match);
-      this.handlePlayerShipCollisions(match, playerDamageById);
-      this.handlePlayerAsteroidCollisions(match, playerDamageById, worldEvents);
-      this.handleBulletCollisions(match, playerDamageById, asteroidDamageById);
-      this.applyAsteroidDamage(match, asteroidDamageById, worldEvents);
-      this.applyHeartCollections(match, healingByPlayerId, worldEvents);
-      this.applyAmmoCollections(match, worldEvents);
-      this.applyPlayerDamageAndHealing(match, playerDamageById, healingByPlayerId);
-      this.handleNewEliminations(match);
-      playerDamageById.clear();
-      healingByPlayerId.clear();
-      asteroidDamageById.clear();
-    }
+    // One world step per server tick. Ships follow their own players'
+    // inputs; one player's bunched packets never move anyone else.
+    this.stepPlayers(match);
+    this.handlePlayerShipCollisions(match, playerDamageById);
+    this.handlePlayerAsteroidCollisions(match, playerDamageById, worldEvents);
+    this.handleBulletCollisions(match, playerDamageById, asteroidDamageById);
+    this.applyAsteroidDamage(match, asteroidDamageById, worldEvents);
+    this.applyHeartCollections(match, healingByPlayerId, worldEvents);
+    this.applyAmmoCollections(match, worldEvents);
+    this.applyPlayerDamageAndHealing(match, playerDamageById, healingByPlayerId);
+    this.handleNewEliminations(match);
 
     if (this.finishIfMatchOver(match)) {
       this.emitWorldEvents(match, worldEvents);
@@ -452,12 +446,11 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
     };
   }
 
-  private stepPlayersOnce(match: BrMatch) {
-    for (const participant of match.players) {
-      if (participant.inputQueue.length > 0) {
-        participant.input = participant.inputQueue.shift()!;
-        participant.state.lastInputSeq = participant.input.inputSeq;
-      }
+  private stepPlayers(match: BrMatch) {
+    for (const { input, participant } of this.playerStepsForTick(match)) {
+      // A drift step carries sequence 0 and confirms nothing.
+      participant.input = input;
+      participant.state.lastInputSeq = Math.max(participant.state.lastInputSeq, input.inputSeq);
       stepPlayerState(participant.state, participant.input, BATTLE_ROYALE_ARENA);
 
       if (
