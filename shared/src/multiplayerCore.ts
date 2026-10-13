@@ -16,6 +16,11 @@ export interface ArenaConfig {
 }
 
 export interface ShipInputState {
+  /**
+   * World-space angle of the shot, in radians. Absent or null fires along
+   * the ship's heading, which is also what older clients send.
+   */
+  aimAngle?: number | null;
   fire: boolean;
   inputSeq: number;
   thrust: boolean;
@@ -297,6 +302,10 @@ export const BULLET_TTL_TICKS = Math.round(1600 / TICK_INTERVAL_MS);
 export const BULLET_SPEED = 15.5;
 export const BULLET_DIAMETER = 14;
 export const BULLET_NOSE_OFFSET = 58;
+/** Muzzle distance from the ship center for a shot fired straight to the side. */
+export const BULLET_SIDE_OFFSET = 36;
+/** Share of the ship's velocity a bullet keeps when it leaves the muzzle. */
+export const BULLET_INHERITED_VELOCITY = 0.35;
 export const WORLD_MARGIN = 140;
 export const PLAYER_SAFE_RADIUS = 320;
 export const HEART_SAFE_RADIUS = 190;
@@ -460,21 +469,76 @@ export const createRuntimePlayerState = (
   };
 };
 
+/**
+ * The angle a shot leaves at: the input's aim angle when the client sent a
+ * usable one, otherwise the ship's heading.
+ */
+export const resolveFireAngle = (
+  playerState: Pick<RuntimePlayerState, "angle">,
+  input: Pick<ShipInputState, "aimAngle">,
+) => {
+  const aimAngle = input.aimAngle;
+  return typeof aimAngle === "number" && Number.isFinite(aimAngle) ? aimAngle : playerState.angle;
+};
+
+/**
+ * Distance from the ship center to the muzzle for a shot at `fireAngle`.
+ * The muzzle follows an ellipse around the hull, so shots leave from the
+ * nose when fired ahead and from the flank when fired sideways.
+ */
+export const getMuzzleOffset = (shipAngle: number, fireAngle: number) => {
+  const forward = Math.cos(fireAngle - shipAngle) * BULLET_SIDE_OFFSET;
+  const sideways = Math.sin(fireAngle - shipAngle) * BULLET_NOSE_OFFSET;
+  return (BULLET_NOSE_OFFSET * BULLET_SIDE_OFFSET) / Math.hypot(forward, sideways);
+};
+
+/**
+ * The aim angle that makes a bullet travel from the ship toward a world
+ * position. A bullet keeps part of the ship's velocity, so firing straight
+ * at the target would drift off it while the ship moves sideways.
+ */
+export const solveAimAngle = (
+  playerState: Pick<RuntimePlayerState, "vx" | "vy" | "x" | "y">,
+  targetX: number,
+  targetY: number,
+) => {
+  const dx = targetX - playerState.x;
+  const dy = targetY - playerState.y;
+  const distance = Math.hypot(dx, dy);
+  if (distance < 0.0001) {
+    return null;
+  }
+
+  const towardX = dx / distance;
+  const towardY = dy / distance;
+  const driftX = playerState.vx * BULLET_INHERITED_VELOCITY;
+  const driftY = playerState.vy * BULLET_INHERITED_VELOCITY;
+  const driftAlong = driftX * towardX + driftY * towardY;
+  // Cancel the sideways drift, then spend the rest of the muzzle speed
+  // toward the target.
+  const sideX = -(driftX - driftAlong * towardX) / BULLET_SPEED;
+  const sideY = -(driftY - driftAlong * towardY) / BULLET_SPEED;
+  const along = Math.sqrt(Math.max(0, 1 - sideX * sideX - sideY * sideY));
+  return Math.atan2(along * towardY + sideY, along * towardX + sideX);
+};
+
 export const createRuntimeBulletState = (
   playerState: RuntimePlayerState,
   bulletId: string,
+  fireAngle: number = playerState.angle,
 ): RuntimeBulletState => {
-  const directionX = Math.cos(playerState.angle);
-  const directionY = Math.sin(playerState.angle);
+  const directionX = Math.cos(fireAngle);
+  const directionY = Math.sin(fireAngle);
+  const muzzleOffset = getMuzzleOffset(playerState.angle, fireAngle);
 
   return {
     id: bulletId,
     ownerId: playerState.id,
     ttlTicks: BULLET_TTL_TICKS,
-    vx: playerState.vx * 0.35 + directionX * BULLET_SPEED,
-    vy: playerState.vy * 0.35 + directionY * BULLET_SPEED,
-    x: playerState.x + directionX * BULLET_NOSE_OFFSET,
-    y: playerState.y + directionY * BULLET_NOSE_OFFSET,
+    vx: playerState.vx * BULLET_INHERITED_VELOCITY + directionX * BULLET_SPEED,
+    vy: playerState.vy * BULLET_INHERITED_VELOCITY + directionY * BULLET_SPEED,
+    x: playerState.x + directionX * muzzleOffset,
+    y: playerState.y + directionY * muzzleOffset,
   };
 };
 

@@ -13,14 +13,16 @@ import {
   type BattleRoyaleSnapshotPayload,
   BULLET_DIAMETER,
   type ClientToServerEvents,
-  circleIntersectsBounds,
   circleOverlapsShipCollider,
+  circlesOverlap,
   createEmptyMatchWorld,
   createInitialBattleRoyaleWorld,
   createInitialMatchWorld,
+  FIRE_COOLDOWN_TICKS,
   getAmmoPacketsInBounds,
   getAsteroidsInBounds,
   getHeartsInBounds,
+  getMuzzleOffset,
   getNearbyAmmoPackets,
   getNearbyAsteroids,
   getNearbyHearts,
@@ -28,6 +30,7 @@ import {
   getShipCollisionBoundingDiameter,
   LOCAL_INPUT_PUSH_INTERVAL_MS,
   MATCH_COUNTDOWN_MS,
+  type MatchBulletSnapshot,
   type MatchEndedPayload,
   type MatchEndReason,
   type MatchFoundPayload,
@@ -49,10 +52,13 @@ import {
   removeAmmoFromWorld,
   removeAsteroidFromWorld,
   removeHeartFromWorld,
+  resolveFireAngle,
   type ServerToClientEvents,
   type ShipCollider,
   type ShipInputState,
   type ShipVariant,
+  SNAPSHOT_INTERVAL_TICKS,
+  solveAimAngle,
   stepPlayerState,
   TICK_INTERVAL_MS,
   type WorldEvent,
@@ -64,13 +70,26 @@ import { ExplosionSystem } from "./explosions";
 import { type GameState, gameStateMachine, getGameState } from "./gameState";
 import { showMultiplayerResult } from "./gameUiActions";
 import { getHudHeartSize, getHudHeartTopLeft } from "./healthHud";
-import { clearShipInput, isMobileDevice, isShipActionActive } from "./input";
+import {
+  clearShipInput,
+  getAimDirection,
+  getAimPointer,
+  isMobileDevice,
+  isShipActionActive,
+} from "./input";
 import { ShipDebrisSystem } from "./shipDebris";
 import { assets } from "./sketch";
 import { recordMultiplayerResult } from "./stats";
 import { ThrusterExhaustSystem } from "./thruster";
 import { trpcClient } from "./trpcClient";
-import { createCameraBounds, getViewScale, height, width } from "./utils";
+import { type CameraBounds, createCameraBounds, getViewScale, height, width } from "./utils";
+import {
+  drawReticle,
+  FRIENDLY_SHOT_PALETTE,
+  HOSTILE_SHOT_PALETTE,
+  type ImpactKind,
+  WeaponEffectsSystem,
+} from "./weaponEffects";
 
 type MultiplayerStatus = "connecting" | "error" | "idle" | "matched" | "queueing";
 
@@ -136,6 +155,25 @@ const HUD_EFFECT_FLIGHT_FRAMES = 24;
 const HUD_EFFECT_PARTICLE_COUNT = 4;
 const SHIP_ARRIVAL_DURATION_MS = 780;
 const SHIP_DESTRUCTION_DURATION_MS = 720;
+/** The pointer counts as idle after this long without a move or a shot. */
+const AIM_POINTER_IDLE_MS = 3500;
+const AIM_GUIDE_LENGTH = 300;
+/** How far out the touch stick's aim point sits. The distance does not change the shot. */
+const AIM_STICK_REACH = 1000;
+/** Aim angles go over the wire every tick while firing: three decimals keep them short. */
+const AIM_ANGLE_PRECISION = 1000;
+/** How far past its last snapshot a vanished bullet is traced to find what it hit. */
+const BULLET_IMPACT_SCAN_TICKS = SNAPSHOT_INTERVAL_TICKS + 1;
+/**
+ * A server bullet of our own that shows up this soon after a predicted
+ * shot already had its muzzle flash drawn.
+ */
+const LOCAL_SHOT_ECHO_MS = 600;
+const RETICLE_BLOOM_MS = 170;
+const HIT_MARKER_MS = 260;
+const CAMERA_KICK_DECAY_MS = 70;
+const CAMERA_KICK_SHOT = 3;
+const CAMERA_KICK_DAMAGE = 11;
 
 interface AmmoHudEffect {
   age: number;
@@ -279,14 +317,18 @@ interface NetcodeDebugSample {
 const NETCODE_DEBUG_HISTORY = 120;
 
 class MultiplayerClientSession {
+  private aimCursorHidden = false;
   private ammoHudEffects: AmmoHudEffect[] = [];
+  private cameraKick = { updatedAt: 0, x: 0, y: 0 };
   private collisionExplosions: ExplosionSystem | null = null;
   private debugHistory: NetcodeDebugSample[] = [];
+  private hitMarkerAt = 0;
   private initialized = false;
   private inputPushIntervalMs = LOCAL_INPUT_PUSH_INTERVAL_MS;
   private isLeavingMode = false;
   private inputBuffer: Array<{ seq: number; input: ShipInputState }> = [];
   private inputSeqCounter = 0;
+  private lastLocalShotAt = 0;
   private lastSentAt = 0;
   private lastSentInput: ShipInputState = {
     fire: false,
@@ -295,7 +337,10 @@ class MultiplayerClientSession {
     turnLeft: false,
     turnRight: false,
   };
+  private localFireCooldownTicks = 0;
   private pendingResult: PendingResultState | null = null;
+  /** Input sequences of predicted shots the server has not processed yet. */
+  private pendingShotSeqs: number[] = [];
   private predictedSelf: RuntimePlayerState | null = null;
   private predictionTickTimer: ReturnType<typeof setInterval> | null = null;
   private p: p5 | null = null;
@@ -310,6 +355,7 @@ class MultiplayerClientSession {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private thrusters = new Map<string, ThrusterExhaustSystem>();
   private viewState = createInitialViewState();
+  private weaponEffects: WeaponEffectsSystem | null = null;
 
   initialize(p: p5) {
     if (this.initialized) {
@@ -360,6 +406,7 @@ class MultiplayerClientSession {
       return;
     }
     p.clear();
+    this.setAimCursorHidden(this.isAimReticleVisible());
 
     const activeMatch = this.viewState.match;
     if (activeMatch === null) {
@@ -397,7 +444,7 @@ class MultiplayerClientSession {
     }
 
     this.drawMatchWorld(p, activeMatch);
-    this.drawHint(p, "Esc: menu");
+    this.drawHint(p, "Click: fire at cursor  •  Space: fire ahead  •  Esc: menu");
   }
 
   private applyRuntimeConfig(runtimeConfig: MultiplayerRuntimeConfig) {
@@ -1121,22 +1168,6 @@ class MultiplayerClientSession {
     p.pop();
   }
 
-  private drawBullet(
-    p: p5,
-    bullet: MatchSnapshotPayload["bullets"][number],
-    isLocalBullet: boolean,
-  ) {
-    p.push();
-    p.noStroke();
-    if (isLocalBullet) {
-      p.fill(255, 240, 230, 245);
-    } else {
-      p.fill(255, 181, 118, 240);
-    }
-    p.circle(bullet.x, bullet.y, 12);
-    p.pop();
-  }
-
   private drawCenterCard(p: p5, title: string, subtitle: string, cardHeight = 224) {
     const cardWidth = Math.min(540, width - 40);
     const cardX = width / 2 - cardWidth / 2;
@@ -1370,6 +1401,7 @@ class MultiplayerClientSession {
     }
 
     const cameraBounds = createCameraBounds(selfPlayer.x, selfPlayer.y, WORLD_CULL_PADDING);
+    const cameraKick = this.updateCameraKick();
     const selfCollider = this.getPlayerCollider(selfPlayer);
     const visibleAsteroids = getAsteroidsInBounds(match.world, cameraBounds, match.arena);
     const visibleHearts = getHeartsInBounds(match.world, cameraBounds, match.arena);
@@ -1411,7 +1443,7 @@ class MultiplayerClientSession {
     this.drawBackdrop(p, selfPlayer.x, selfPlayer.y);
 
     p.push();
-    p.translate(width / 2, height / 2);
+    p.translate(width / 2 + cameraKick.x, height / 2 + cameraKick.y);
     const viewScale = getViewScale();
     if (viewScale !== 1) {
       p.scale(viewScale);
@@ -1447,14 +1479,8 @@ class MultiplayerClientSession {
     }
 
     this.drawThrusters(p, renderedPlayers, match.playerId);
-
-    for (let bulletIndex = 0; bulletIndex < renderedBullets.length; bulletIndex++) {
-      const bullet = renderedBullets[bulletIndex];
-      if (!circleIntersectsBounds(bullet.x, bullet.y, BULLET_DIAMETER, cameraBounds)) {
-        continue;
-      }
-      this.drawBullet(p, bullet, bullet.ownerId === match.playerId);
-    }
+    this.weaponEffects?.drawBolts(renderedBullets, match.playerId, cameraBounds);
+    this.drawAimGuide(selfPlayer);
 
     this.drawPlayerArrivalPortals(p, renderedPlayers);
 
@@ -1465,6 +1491,8 @@ class MultiplayerClientSession {
         renderedPlayers[playerIndex].id === match.playerId,
       );
     }
+
+    this.weaponEffects?.run(renderedPlayers, cameraBounds);
 
     if (getGameState().settings.collisionDebugEnabled && isDebugToolsEnabled()) {
       this.drawCollisionDebug(
@@ -1489,9 +1517,149 @@ class MultiplayerClientSession {
       match.arena,
     );
 
+    this.drawAimReticle(p, selfPlayer);
+
     if (getGameState().settings.netcodeDebugEnabled && isDebugToolsEnabled()) {
       this.drawNetcodeDebugOverlay(p, match);
     }
+  }
+
+  /**
+   * The world position an aimed shot should travel toward, or null when the
+   * shot goes straight ahead. A held mouse button aims at the cursor, the
+   * touch stick aims along its direction, and the plain fire key does not
+   * aim. `preview` also counts a cursor that moved lately without firing.
+   */
+  private resolveAimTarget(self: MatchPlayerSnapshot, preview: boolean) {
+    const pointer = getAimPointer();
+    if (pointer !== null && (pointer.firing || (preview && this.isAimPointerEngaged()))) {
+      const viewScale = getViewScale();
+      return {
+        x: self.x + (pointer.x - width / 2) / viewScale,
+        y: self.y + (pointer.y - height / 2) / viewScale,
+      };
+    }
+
+    const direction = getAimDirection();
+    if (direction !== null) {
+      return {
+        x: self.x + Math.cos(direction) * AIM_STICK_REACH,
+        y: self.y + Math.sin(direction) * AIM_STICK_REACH,
+      };
+    }
+
+    return null;
+  }
+
+  private isAimPointerEngaged() {
+    const pointer = getAimPointer();
+    return (
+      pointer !== null &&
+      (pointer.firing || performance.now() - pointer.movedAt < AIM_POINTER_IDLE_MS)
+    );
+  }
+
+  /** True while the reticle stands in for the mouse cursor. */
+  private isAimReticleVisible() {
+    const match = this.viewState.match;
+    return (
+      match !== null &&
+      !match.migrating &&
+      match.snapshot !== null &&
+      match.snapshot.phase === "active" &&
+      this.pendingResult === null &&
+      this.predictedSelf !== null &&
+      this.predictedSelf.health > 0 &&
+      getGameState().overlay === null &&
+      getAimPointer() !== null
+    );
+  }
+
+  private setAimCursorHidden(hidden: boolean) {
+    if (this.aimCursorHidden === hidden) {
+      return;
+    }
+    this.aimCursorHidden = hidden;
+    document.body.classList.toggle("is-aiming", hidden);
+  }
+
+  private drawAimGuide(selfPlayer: MatchPlayerSnapshot) {
+    if (selfPlayer.health <= 0 || getGameState().overlay !== null) {
+      return;
+    }
+
+    // The fire key shoots straight ahead even while the cursor is on screen:
+    // do not suggest otherwise.
+    const firesAhead =
+      isShipActionActive("fire") && getAimPointer()?.firing !== true && getAimDirection() === null;
+    if (firesAhead) {
+      return;
+    }
+
+    const target = this.resolveAimTarget(selfPlayer, true);
+    const fireAngle = target === null ? null : solveAimAngle(selfPlayer, target.x, target.y);
+    if (target === null || fireAngle === null) {
+      return;
+    }
+
+    // The guide follows the bullet's path. That differs from the fire angle
+    // while the ship moves, because the bullet keeps part of its velocity.
+    const muzzleOffset = getMuzzleOffset(selfPlayer.angle, fireAngle);
+    const muzzleX = selfPlayer.x + Math.cos(fireAngle) * muzzleOffset;
+    const muzzleY = selfPlayer.y + Math.sin(fireAngle) * muzzleOffset;
+    const reach = Math.hypot(target.x - muzzleX, target.y - muzzleY);
+    this.weaponEffects?.drawAimGuide(
+      muzzleX,
+      muzzleY,
+      Math.atan2(target.y - muzzleY, target.x - muzzleX),
+      // Stop at the cursor so the guide never points past the target.
+      Math.min(AIM_GUIDE_LENGTH, reach),
+      selfPlayer.ammo > 0 ? 1 : 0.35,
+    );
+  }
+
+  private drawAimReticle(p: p5, selfPlayer: MatchPlayerSnapshot) {
+    const pointer = getAimPointer();
+    if (pointer === null || !this.isAimReticleVisible()) {
+      return;
+    }
+
+    const now = performance.now();
+    drawReticle(p, {
+      ammo: selfPlayer.ammo,
+      bloom: Math.max(0, 1 - (now - this.lastLocalShotAt) / RETICLE_BLOOM_MS),
+      hitFlash: Math.max(0, 1 - (now - this.hitMarkerAt) / HIT_MARKER_MS),
+      idle: !this.isAimPointerEngaged(),
+      x: pointer.x,
+      y: pointer.y,
+    });
+  }
+
+  /** Push the camera, for the punch of a shot or a hit. It eases back on its own. */
+  private kickCamera(angle: number, strength: number) {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      return;
+    }
+    this.cameraKick.x += Math.cos(angle) * strength;
+    this.cameraKick.y += Math.sin(angle) * strength;
+  }
+
+  private updateCameraKick() {
+    const now = performance.now();
+    const decay = Math.exp(-(now - this.cameraKick.updatedAt) / CAMERA_KICK_DECAY_MS);
+    this.cameraKick.updatedAt = now;
+    this.cameraKick.x *= decay;
+    this.cameraKick.y *= decay;
+    return this.cameraKick;
+  }
+
+  private isInView(x: number, y: number) {
+    const self = this.predictedSelf;
+    if (self === null) {
+      return false;
+    }
+    const bounds: CameraBounds = createCameraBounds(self.x, self.y);
+    return x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom;
   }
 
   private drawNetcodeDebugOverlay(p: p5, _match: ActiveMatchState) {
@@ -2066,6 +2234,9 @@ class MultiplayerClientSession {
     // last input it applied before the handoff.
     this.predictedSelf = null;
     this.inputBuffer = [];
+    this.pendingShotSeqs = [];
+    this.localFireCooldownTicks = 0;
+    this.weaponEffects?.forgetAllBullets();
 
     match.world = world;
     match.worldVersion = payload.world.worldVersion;
@@ -2089,6 +2260,7 @@ class MultiplayerClientSession {
   private leaveMode() {
     this.isLeavingMode = true;
     clearShipInput();
+    this.setAimCursorHidden(false);
 
     if (this.socket !== null) {
       if (this.socket.connected) {
@@ -2138,10 +2310,12 @@ class MultiplayerClientSession {
       if (
         isLocalPlayer &&
         previousPlayer !== undefined &&
-        nextPlayer.health < previousPlayer.health &&
-        nextPlayer.health > 0
+        nextPlayer.health < previousPlayer.health
       ) {
-        playSound("playerHit");
+        this.kickCamera(Math.random() * Math.PI * 2, CAMERA_KICK_DAMAGE);
+        if (nextPlayer.health > 0) {
+          playSound("playerHit");
+        }
       }
 
       if (
@@ -2157,6 +2331,130 @@ class MultiplayerClientSession {
       }
       this.createShipDestruction(nextPlayer);
     }
+
+    this.playBulletEffects(previousSnapshot, nextSnapshot);
+  }
+
+  /** Muzzle flashes for bullets that appeared, impacts for bullets that are gone. */
+  private playBulletEffects(
+    previousSnapshot: MatchSnapshotPayload,
+    nextSnapshot: MatchSnapshotPayload,
+  ) {
+    const match = this.viewState.match;
+    const effects = this.weaponEffects;
+    if (match === null || effects === null) {
+      return;
+    }
+
+    const previousBulletIds = new Set<string>();
+    for (let i = 0; i < previousSnapshot.bullets.length; i++) {
+      previousBulletIds.add(previousSnapshot.bullets[i].id);
+    }
+
+    const nextBulletIds = new Set<string>();
+    for (let i = 0; i < nextSnapshot.bullets.length; i++) {
+      const bullet = nextSnapshot.bullets[i];
+      nextBulletIds.add(bullet.id);
+      if (previousBulletIds.has(bullet.id)) {
+        continue;
+      }
+
+      effects.trackBullet(bullet);
+      const isLocalBullet = bullet.ownerId === match.playerId;
+      if (isLocalBullet && performance.now() - this.lastLocalShotAt < LOCAL_SHOT_ECHO_MS) {
+        continue;
+      }
+
+      effects.addMuzzleFlash(
+        bullet.ownerId,
+        bullet.x,
+        bullet.y,
+        Math.atan2(bullet.vy, bullet.vx),
+        isLocalBullet ? FRIENDLY_SHOT_PALETTE : HOSTILE_SHOT_PALETTE,
+      );
+      if (this.isInView(bullet.x, bullet.y)) {
+        playSound("shoot");
+      }
+    }
+
+    for (let i = 0; i < previousSnapshot.bullets.length; i++) {
+      const bullet = previousSnapshot.bullets[i];
+      if (nextBulletIds.has(bullet.id)) {
+        continue;
+      }
+
+      effects.forgetBullet(bullet.id);
+      const impact = this.resolveBulletImpact(bullet, match, previousSnapshot.players);
+      const isLocalBullet = bullet.ownerId === match.playerId;
+      effects.addImpact(
+        impact.x,
+        impact.y,
+        Math.atan2(bullet.vy, bullet.vx),
+        isLocalBullet ? FRIENDLY_SHOT_PALETTE : HOSTILE_SHOT_PALETTE,
+        impact.kind,
+      );
+      if (impact.kind === "ship" && isLocalBullet) {
+        this.hitMarkerAt = performance.now();
+      }
+      if (impact.kind !== "fade" && this.isInView(impact.x, impact.y)) {
+        playSound("bulletHit");
+      }
+    }
+  }
+
+  /**
+   * Snapshots only say that a bullet is gone, not why. Trace it along its
+   * path for the ticks since its last snapshot to find what it ran into.
+   */
+  private resolveBulletImpact(
+    bullet: MatchBulletSnapshot,
+    match: ActiveMatchState,
+    players: MatchPlayerSnapshot[],
+  ): { kind: ImpactKind; x: number; y: number } {
+    const xLimit = match.arena.width / 2;
+    const yLimit = match.arena.height / 2;
+
+    for (let step = 0; step <= BULLET_IMPACT_SCAN_TICKS * 2; step++) {
+      const ticks = step / 2;
+      const x = bullet.x + bullet.vx * ticks;
+      const y = bullet.y + bullet.vy * ticks;
+
+      if (Math.abs(x) > xLimit || Math.abs(y) > yLimit) {
+        return {
+          kind: "edge",
+          x: Math.max(-xLimit, Math.min(xLimit, x)),
+          y: Math.max(-yLimit, Math.min(yLimit, y)),
+        };
+      }
+
+      const nearbyAsteroids = getNearbyAsteroids(match.world, x, y, BULLET_DIAMETER, match.arena);
+      for (let i = 0; i < nearbyAsteroids.length; i++) {
+        const asteroid = nearbyAsteroids[i];
+        if (circlesOverlap(x, y, BULLET_DIAMETER, asteroid.x, asteroid.y, asteroid.size)) {
+          return { kind: "asteroid", x, y };
+        }
+      }
+
+      for (let i = 0; i < players.length; i++) {
+        const player = players[i];
+        // Same exemptions as the server: no self hits, and ships that are
+        // dead or still recovering from a hit let bullets through.
+        if (player.id === bullet.ownerId || player.health <= 0 || player.damageRecoveryTicks > 0) {
+          continue;
+        }
+        const collider = getShipCollider(
+          player.x + player.vx * ticks,
+          player.y + player.vy * ticks,
+          player.angle,
+          player.shipVariant,
+        );
+        if (circleOverlapsShipCollider(x, y, BULLET_DIAMETER, collider)) {
+          return { kind: "ship", x, y };
+        }
+      }
+    }
+
+    return { kind: "fade", x: bullet.x + bullet.vx, y: bullet.y + bullet.vy };
   }
 
   private playWorldEventEffects(match: ActiveMatchState, events: WorldEvent[]) {
@@ -2221,6 +2519,10 @@ class MultiplayerClientSession {
     // Discard inputs the server has already processed
     this.inputBuffer = this.inputBuffer.filter((entry) => entry.seq > serverState.lastInputSeq);
 
+    // The server's ammo count does not include shots it has not seen yet.
+    this.pendingShotSeqs = this.pendingShotSeqs.filter((seq) => seq > serverState.lastInputSeq);
+    this.predictedSelf.ammo = Math.max(0, serverState.ammo - this.pendingShotSeqs.length);
+
     // Replay unacknowledged inputs on top of server state.
     // Each buffered entry was produced by one tick of the client
     // simulation, matching one server tick.
@@ -2246,7 +2548,7 @@ class MultiplayerClientSession {
     const currentInput: ShipInputState =
       state.overlay === null
         ? {
-            fire: isShipActionActive("fire"),
+            fire: isShipActionActive("fire") || getAimPointer()?.firing === true,
             inputSeq: seq,
             thrust: isShipActionActive("thrust"),
             turnLeft: isShipActionActive("turnLeft"),
@@ -2259,6 +2561,14 @@ class MultiplayerClientSession {
             turnLeft: false,
             turnRight: false,
           };
+    if (currentInput.fire) {
+      const target = this.resolveAimTarget(this.predictedSelf, false);
+      const aimAngle =
+        target === null ? null : solveAimAngle(this.predictedSelf, target.x, target.y);
+      if (aimAngle !== null) {
+        currentInput.aimAngle = Math.round(aimAngle * AIM_ANGLE_PRECISION) / AIM_ANGLE_PRECISION;
+      }
+    }
 
     // Buffer for reconciliation replay
     this.inputBuffer.push({ seq, input: currentInput });
@@ -2268,6 +2578,7 @@ class MultiplayerClientSession {
 
     // Step local prediction
     stepPlayerState(this.predictedSelf, currentInput, match.arena);
+    this.predictLocalShot(currentInput);
 
     // Optimistic pickup collection — detect overlap using the same
     // collision logic as the server so hearts and ammo disappear and
@@ -2353,6 +2664,42 @@ class MultiplayerClientSession {
     }
   }
 
+  /**
+   * Mirror the server's fire rule so the muzzle flash, the sound and the
+   * ammo count answer the trigger at once, not one round trip later. The
+   * bullet itself still comes from the server.
+   */
+  private predictLocalShot(input: ShipInputState) {
+    const self = this.predictedSelf;
+    if (self === null) {
+      return;
+    }
+
+    if (this.localFireCooldownTicks > 0) {
+      this.localFireCooldownTicks--;
+    }
+    if (!input.fire || this.localFireCooldownTicks > 0 || self.ammo <= 0 || self.health <= 0) {
+      return;
+    }
+
+    this.localFireCooldownTicks = FIRE_COOLDOWN_TICKS;
+    self.ammo--;
+    this.pendingShotSeqs.push(input.inputSeq);
+    this.lastLocalShotAt = performance.now();
+
+    const fireAngle = resolveFireAngle(self, input);
+    const muzzleOffset = getMuzzleOffset(self.angle, fireAngle);
+    this.weaponEffects?.addMuzzleFlash(
+      self.id,
+      self.x + Math.cos(fireAngle) * muzzleOffset,
+      self.y + Math.sin(fireAngle) * muzzleOffset,
+      fireAngle,
+      FRIENDLY_SHOT_PALETTE,
+    );
+    this.kickCamera(fireAngle + Math.PI, CAMERA_KICK_SHOT);
+    playSound("shoot");
+  }
+
   private startPredictionLoop() {
     this.stopPredictionLoop();
     this.predictionTickTimer = setInterval(() => {
@@ -2378,6 +2725,11 @@ class MultiplayerClientSession {
     this.inputSeqCounter = 0;
     this.debugHistory = [];
     this.ammoHudEffects = [];
+    this.cameraKick = { updatedAt: 0, x: 0, y: 0 };
+    this.hitMarkerAt = 0;
+    this.lastLocalShotAt = 0;
+    this.localFireCooldownTicks = 0;
+    this.pendingShotSeqs = [];
     this.playerArrivals.clear();
     this.playerDestructions.clear();
     this.thrusters.clear();
@@ -2385,11 +2737,13 @@ class MultiplayerClientSession {
     if (this.p === null) {
       this.collisionExplosions = null;
       this.shipDebrisEffects = null;
+      this.weaponEffects = null;
       return;
     }
 
     this.collisionExplosions = new ExplosionSystem(this.p);
     this.shipDebrisEffects = new ShipDebrisSystem(this.p);
+    this.weaponEffects = new WeaponEffectsSystem(this.p);
   }
 
   private resetViewState() {

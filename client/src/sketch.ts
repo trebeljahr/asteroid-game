@@ -139,14 +139,14 @@ const sketch = (p: p5) => {
     };
   };
   p.setup = () => {
-    p.createCanvas(width, height);
+    const renderer = p.createCanvas(width, height);
     assets.asteroids = [
       rasterizeImageAsset(p, assets.asteroids[0], ASTEROID_TEXTURE_SIZE),
       rasterizeImageAsset(p, assets.asteroids[1], ASTEROID_TEXTURE_SIZE),
       rasterizeImageAsset(p, assets.asteroids[2], ASTEROID_TEXTURE_SIZE),
     ];
     configureGameModeActions(p);
-    initializeShipInput();
+    initializeShipInput(renderer.elt as HTMLCanvasElement);
     initializeMobileControls();
     initializeMultiplayerSession(p);
     engine.world.gravity.y = 0;

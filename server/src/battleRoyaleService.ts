@@ -48,6 +48,7 @@ import {
   removeAmmoFromWorld,
   removeAsteroidFromWorld,
   removeHeartFromWorld,
+  resolveFireAngle,
   resolvePlayerCollision,
   shipCollidersOverlap,
   snapshotPlayerState,
@@ -466,7 +467,11 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
         participant.state.ammo > 0
       ) {
         match.bullets.push(
-          createRuntimeBulletState(participant.state, `br-bullet-${++match.counters.bullet}`),
+          createRuntimeBulletState(
+            participant.state,
+            `br-bullet-${++match.counters.bullet}`,
+            resolveFireAngle(participant.state, participant.input),
+          ),
         );
         participant.state.ammo--;
         participant.state.fireCooldownTicks = FIRE_COOLDOWN_TICKS;

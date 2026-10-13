@@ -8,6 +8,7 @@ import {
   registerActionCause,
   requestLandscapeOrientationLock,
   type ShipAction,
+  setAimDirection,
 } from "./input";
 
 interface MobileButtonConfig {
@@ -43,10 +44,16 @@ const mobileButtons: MobileButtonConfig[] = [
     action: "fire",
     causeId: "mobile:fire",
     label: "Fire",
-    modes: ["multiplayer", "battle-royale", "horde"],
+    modes: ["horde"],
     side: "right",
   },
 ];
+
+/** Modes where the aim stick replaces the plain fire button. */
+const AIM_STICK_MODES: GameMode[] = ["multiplayer", "battle-royale"];
+const AIM_STICK_CAUSE_ID = "mobile:aimStick";
+/** Share of the stick's travel the knob must leave the center by before it aims. */
+const AIM_STICK_DEADZONE = 0.32;
 
 let initialized = false;
 
@@ -120,6 +127,83 @@ const createActionButton = (config: MobileButtonConfig) => {
   };
 };
 
+/**
+ * A fire button that also aims. Holding it fires straight ahead, like the
+ * button it replaces. Dragging the knob off center turns the shots toward
+ * the drag direction, independent of where the ship points.
+ */
+const createAimStick = () => {
+  registerActionCause(AIM_STICK_CAUSE_ID, "fire");
+
+  const stick = document.createElement("div");
+  stick.className = "mobileAimStick";
+
+  const knob = document.createElement("div");
+  knob.className = "mobileAimStickKnob";
+  knob.textContent = "Fire";
+  stick.appendChild(knob);
+
+  const hint = document.createElement("span");
+  hint.className = "mobileAimStickHint";
+  hint.textContent = "Drag to aim";
+  knob.appendChild(hint);
+
+  let activePointerId: number | null = null;
+
+  const moveKnob = (event: PointerEvent) => {
+    const bounds = stick.getBoundingClientRect();
+    const travel = (bounds.width - knob.offsetWidth) / 2;
+    const offsetX = event.clientX - (bounds.left + bounds.width / 2);
+    const offsetY = event.clientY - (bounds.top + bounds.height / 2);
+    const distance = Math.hypot(offsetX, offsetY);
+    const reach = distance > travel && distance > 0 ? travel / distance : 1;
+
+    knob.style.transform = `translate(${offsetX * reach}px, ${offsetY * reach}px)`;
+    const aiming = distance > travel * AIM_STICK_DEADZONE;
+    stick.classList.toggle("is-aiming", aiming);
+    // The camera never rotates, so a screen direction is a world direction.
+    setAimDirection(aiming ? Math.atan2(offsetY, offsetX) : null);
+  };
+
+  const reset = () => {
+    activePointerId = null;
+    knob.style.transform = "";
+    stick.classList.remove("is-pressed", "is-aiming");
+    setAimDirection(null);
+    dispatchActionCause(AIM_STICK_CAUSE_ID, false);
+  };
+
+  const release = (event: PointerEvent) => {
+    if (event.pointerId === activePointerId) {
+      reset();
+    }
+  };
+
+  stick.addEventListener("pointerdown", (event) => {
+    if (activePointerId !== null) {
+      return;
+    }
+    event.preventDefault();
+    requestLandscapeOrientationLock();
+    activePointerId = event.pointerId;
+    stick.classList.add("is-pressed");
+    dispatchActionCause(AIM_STICK_CAUSE_ID, true);
+    moveKnob(event);
+    // Keep receiving the drag after the finger leaves the stick.
+    stick.setPointerCapture(event.pointerId);
+  });
+  stick.addEventListener("pointermove", (event) => {
+    if (event.pointerId === activePointerId) {
+      moveKnob(event);
+    }
+  });
+  stick.addEventListener("pointerup", release);
+  stick.addEventListener("pointercancel", release);
+  stick.addEventListener("lostpointercapture", release);
+
+  return { reset, stick };
+};
+
 const createControlsRoot = () => {
   const root = document.createElement("div");
   root.className = "mobileControlsRoot";
@@ -172,9 +256,14 @@ const createControlsRoot = () => {
     rightCluster.appendChild(button);
   }
 
+  const aimStick = createAimStick();
+  resetControls.push(aimStick.reset);
+  rightCluster.appendChild(aimStick.stick);
+
   bottomRow.append(leftCluster, rightCluster);
   root.appendChild(bottomRow);
   return {
+    aimStick,
     buttonEntries,
     resetControls,
     root,
@@ -226,7 +315,7 @@ export const initializeMobileControls = () => {
     return;
   }
 
-  const { buttonEntries, root: controlsRoot, resetControls } = createControlsRoot();
+  const { aimStick, buttonEntries, root: controlsRoot, resetControls } = createControlsRoot();
   const rotatePrompt = createRotatePrompt();
 
   const syncUi = () => {
@@ -243,6 +332,12 @@ export const initializeMobileControls = () => {
       if (!isVisible) {
         reset();
       }
+    }
+
+    const showAimStick = activeMode !== null && AIM_STICK_MODES.includes(activeMode);
+    aimStick.stick.hidden = !showAimStick;
+    if (!showAimStick) {
+      aimStick.reset();
     }
 
     controlsRoot.classList.toggle("is-visible", showControls && !showRotatePrompt);

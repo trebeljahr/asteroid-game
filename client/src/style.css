@@ -56,6 +56,11 @@ body.app-ready canvas {
   opacity: 1;
 }
 
+/* The multiplayer aim reticle is drawn on the canvas in place of the cursor. */
+body.is-aiming canvas {
+  cursor: none;
+}
+
 body.app-loading .menuRoot {
   opacity: 0;
 }
@@ -491,6 +496,7 @@ body.app-loading .backgroundImage {
 
 .mobileControlCluster--right {
   justify-content: flex-end;
+  align-items: flex-end;
 }
 
 .mobileControlButton {
@@ -529,6 +535,62 @@ body.app-loading .backgroundImage {
   box-shadow:
     0 0.5rem 1.2rem rgba(1, 5, 12, 0.28),
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.mobileAimStick {
+  pointer-events: auto;
+  display: grid;
+  place-items: center;
+  width: min(30vw, 7.5rem, 30vh);
+  aspect-ratio: 1;
+  border: 1px solid rgba(152, 218, 255, 0.32);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(17, 35, 52, 0.5), rgba(10, 23, 36, 0.86));
+  touch-action: none;
+  user-select: none;
+  backdrop-filter: blur(12px);
+  box-shadow:
+    0 1rem 2.4rem rgba(1, 5, 12, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition: border-color 90ms ease;
+}
+
+.mobileAimStick[hidden] {
+  display: none;
+}
+
+.mobileAimStick.is-aiming {
+  border-color: rgba(120, 214, 255, 0.82);
+}
+
+.mobileAimStickKnob {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.12rem;
+  width: 58%;
+  aspect-ratio: 1;
+  border: 1px solid rgba(144, 221, 255, 0.5);
+  border-radius: 50%;
+  background: linear-gradient(180deg, rgba(38, 101, 142, 0.9), rgba(20, 63, 95, 0.96));
+  color: rgba(234, 246, 255, 0.97);
+  font-size: clamp(0.8rem, 2.2vw, 0.95rem);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.mobileAimStick.is-pressed .mobileAimStickKnob {
+  background: linear-gradient(180deg, rgba(58, 138, 190, 0.94), rgba(28, 84, 126, 0.98));
+}
+
+.mobileAimStickHint {
+  color: rgba(204, 229, 244, 0.72);
+  font-size: 0.46rem;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
 }
 
 .mobileRotatePrompt {

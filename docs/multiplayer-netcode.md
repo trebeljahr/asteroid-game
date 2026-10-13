@@ -133,6 +133,7 @@ Each input sent to the server carries an `inputSeq` number. The server tracks th
 ```typescript
 // shared/src/multiplayerCore.ts
 export interface ShipInputState {
+  aimAngle?: number | null;  // see "Aiming" below
   fire: boolean;
   inputSeq: number;   // <-- sequence number
   thrust: boolean;
@@ -262,12 +263,46 @@ export const stepPlayerState = (state, input, arena) => {
 
 **File:** `shared/src/multiplayerCore.ts` — `stepPlayerState()`
 
+## Aiming
+
+A shot does not have to follow the ship's heading. Each input can carry an `aimAngle`, a world-space angle in radians, and the server fires along it:
+
+```typescript
+// server, once per fired shot
+createRuntimeBulletState(state, bulletId, resolveFireAngle(state, input));
+```
+
+`resolveFireAngle()` falls back to the ship's heading when `aimAngle` is absent, null or not finite. That keeps the fire key and clients that predate aiming working: they send no angle and shoot straight ahead.
+
+The client picks the angle from the input device:
+
+| Input | Shot |
+|-------|------|
+| Space | Straight ahead, no `aimAngle` |
+| Left mouse button on the canvas | At the cursor |
+| Touch aim stick, held at its center | Straight ahead, no `aimAngle` |
+| Touch aim stick, dragged | Along the drag direction |
+
+A bullet keeps part of the ship's velocity (`BULLET_INHERITED_VELOCITY`), so a shot fired straight at the cursor would drift off it while the ship moves sideways. `solveAimAngle()` on the client corrects for that: it returns the angle whose resulting bullet velocity points at the target.
+
+The muzzle follows an ellipse around the hull (`getMuzzleOffset()`), so an aimed shot leaves from the flank instead of from inside the ship.
+
+**Files:** `shared/src/multiplayerCore.ts` — `resolveFireAngle()`, `solveAimAngle()`, `getMuzzleOffset()`; `client/src/input.ts` — pointer and stick aim state
+
+### Predicted shot feedback
+
+Bullets stay server-authoritative, but waiting a round trip for any response to the trigger feels dead. The client mirrors the server's fire rule (cooldown and ammo) in `predictLocalShot()` and plays the muzzle flash, the sound and the ammo count at once. It records the input sequence of each predicted shot. Reconciliation subtracts the shots the server has not processed yet from the server's ammo count, so the HUD does not flicker back up.
+
+Muzzle flashes for other pilots and all impact effects come from comparing bullet ids between two snapshots: a new id is a shot, a missing id is an impact. A snapshot does not say what a bullet hit, so `resolveBulletImpact()` traces the vanished bullet along its path to find out.
+
+**Files:** `client/src/multiplayerSession.ts` — `predictLocalShot()`, `playBulletEffects()`, `resolveBulletImpact()`; `client/src/weaponEffects.ts` — bolt, muzzle flash, impact and reticle drawing
+
 ## What's NOT Predicted
 
 The client only predicts its own **movement** (position, velocity, angle). These remain server-authoritative and are taken directly from snapshots:
 
 - Health and damage
-- Ammo count
+- Ammo count (the client only subtracts its own unacknowledged shots)
 - Bullet creation and collisions
 - Asteroid/pickup spawning and collection
 - Match phase transitions
@@ -298,4 +333,5 @@ If you only buffer inputs when they're sent over the network (e.g., every 33ms),
 | `shared/src/multiplayerCore.ts` | Physics, types, constants shared between client and server |
 | `server/src/multiplayerService.ts` | Authoritative game simulation, snapshot broadcasting |
 | `client/src/multiplayerSession.ts` | Prediction tick loop, reconciliation, rendering |
-| `client/src/input.ts` | Keyboard/touch input capture |
+| `client/src/input.ts` | Keyboard/touch/pointer input capture |
+| `client/src/weaponEffects.ts` | Client-only shot visuals |

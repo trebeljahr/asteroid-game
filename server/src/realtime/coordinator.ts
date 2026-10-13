@@ -49,7 +49,10 @@ const isInput = (value: unknown): value is ShipInputState => {
     typeof input.fire === "boolean" &&
     typeof input.thrust === "boolean" &&
     typeof input.turnLeft === "boolean" &&
-    typeof input.turnRight === "boolean"
+    typeof input.turnRight === "boolean" &&
+    (input.aimAngle === undefined ||
+      input.aimAngle === null ||
+      (typeof input.aimAngle === "number" && Number.isFinite(input.aimAngle)))
   );
 };
 
