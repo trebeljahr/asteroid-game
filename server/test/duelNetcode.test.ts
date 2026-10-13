@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { PLAYER_TURN_SPEED } from "../../shared/src";
+import { MultiplayerService } from "../src/multiplayerService";
 import { INPUT_BUDGET_MAX, INPUT_BUDGET_PER_TICK } from "../src/realtime/inputPacing";
+import type { HostContext } from "../src/realtime/matchHost";
 import { type Controls, idle, type LinkProfile, runDuel, summarize } from "./netcodeHarness";
 
 // Each pilot circles near its own spawn point, with changing thrust and
@@ -164,4 +166,49 @@ test("sending inputs faster does not make a ship faster", async (t) => {
     cheating <= honest * INPUT_BUDGET_PER_TICK + INPUT_BUDGET_MAX + 5,
     `the fast sender got ${cheating.toFixed(0)} steps against ${honest.toFixed(0)}`,
   );
+});
+
+test("an input whose sequence number is not a counter value is ignored", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"], now: 1_000_000 });
+  const io = {
+    in: () => ({ socketsJoin: () => {}, socketsLeave: () => {} }),
+    to: () => ({ emit: () => {} }),
+  };
+  const duel = new MultiplayerService({
+    durability: {
+      canHandOff: false,
+      finish: async () => {},
+      leaseLive: () => true,
+      open: async (matchId: string) => ({ epoch: 1, matchId, owner: "replica-test" }),
+    },
+    io,
+    now: () => Date.now(),
+    replicaId: "replica-test",
+    routes: { bind: () => {}, unbind: () => {} },
+  } as unknown as HostContext);
+  const ticket = (socketId: string) => {
+    return {
+      enqueuedAt: Date.now(),
+      mode: "duel" as const,
+      replicaId: "replica-test",
+      shipVariant: "orbit-dart" as const,
+      socketId,
+      userId: null,
+    };
+  };
+  await duel.createMatch([ticket("s1"), ticket("s2")]);
+  const matchId = duel.fences()[0].matchId;
+  t.mock.timers.tick(3000);
+
+  for (const inputSeq of [Number.NaN, Number.POSITIVE_INFINITY, -4, 2.5]) {
+    duel.handleInput(matchId, "s1", { ...idle, inputSeq, turnRight: true });
+  }
+  duel.handleInput(matchId, "s1", { ...idle, inputSeq: 7, turnRight: true });
+  t.mock.timers.tick(200);
+
+  const state = duel.snapshotFor(matchId)?.state as {
+    players: Array<{ state: { angle: number; lastInputSeq: number } }>;
+  };
+  assert.equal(state.players[0].state.lastInputSeq, 7);
+  assert.ok(Math.abs(state.players[0].state.angle - PLAYER_TURN_SPEED) < 1e-9, "one step applied");
 });

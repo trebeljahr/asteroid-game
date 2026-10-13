@@ -260,6 +260,9 @@ export abstract class MatchHostBase<P extends HostParticipant, M extends HostMat
   handleInput(matchId: string, socketId: string, input: ShipInputState) {
     const participant = this.participantForSocket(matchId, socketId);
     if (participant === null) return;
+    // The sequence number is echoed in snapshots and stored in durable
+    // match state, so it must be a plain counter value.
+    if (!Number.isSafeInteger(input.inputSeq) || input.inputSeq < 0) return;
     // Queue the input. The tick loop applies queued inputs in order, one
     // ship step each.
     participant.inputQueue.push(input);
