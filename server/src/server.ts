@@ -34,6 +34,11 @@ import { createAppRouter, createTRPCContext } from "./trpc/router";
 const app = express();
 const httpServer = createServer(app);
 let draining = false;
+let drainingSince = 0;
+// Traefik's own health check fails only after this grace: it drops a
+// container on ONE failed check, and Coolify stops this one as soon as Docker
+// calls the new one healthy, which Traefik can take 2 s more to add.
+const PROXY_GRACE_MS = Math.min(4000, DRAIN_DELAY_MS / 4);
 const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
   cors: {
     origin: true,
@@ -50,6 +55,26 @@ const appRouter = createAppRouter(
 
 const clientDistPath = path.resolve(__dirname, "../../client/dist");
 
+// Traefik's drain probe — ahead of every route. It reports only whether this
+// container is draining; readiness is /health, which Docker runs. Traefik
+// sends it straight to this container with an X-Hatchkit-Drain header; a
+// visitor's request is forwarded by Traefik, which always adds
+// X-Forwarded-For, so a visitor can't pose as it.
+app.use((request, response, next) => {
+  if (
+    request.headers["x-hatchkit-drain"] === undefined ||
+    request.headers["x-forwarded-for"] !== undefined
+  ) {
+    next();
+    return;
+  }
+  const failing = draining && Date.now() - drainingSince >= PROXY_GRACE_MS;
+  response
+    .status(failing ? 503 : 200)
+    .set("cache-control", "no-store")
+    .type("text/plain")
+    .send(failing ? "draining\n" : "serving\n");
+});
 app.use(
   cors({
     origin: true,
@@ -147,6 +172,7 @@ const port = Number(process.env.PORT ?? 9777);
 process.on("SIGTERM", () => {
   if (draining) return;
   draining = true;
+  drainingSince = Date.now();
   // Hand live matches to another replica: final snapshot, lease
   // `handoff`, then clients reconnect elsewhere and resume.
   void coordinator?.beginDrain().catch((error) => {
