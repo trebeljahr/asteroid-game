@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist/bench"
+  },
+  "include": ["bench/**/*.ts", "src/**/*.ts", "../shared/src/**/*.ts"]
+}
