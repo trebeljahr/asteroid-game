@@ -14,9 +14,10 @@ and what the snapshot costs on the wire.
 - Before each tick the harness tops every ship up to full health and ammo
   and keeps the spawn timers due. The load stays at its peak for the whole
   run, and nobody is eliminated.
-- Emitted payloads are encoded with `JSON.stringify` inside the tick, as
-  socket.io's default parser does for a room broadcast. Writing to the
-  sockets is not simulated.
+- Emitted payloads are encoded inside the tick with the server's
+  socket.io parser (msgpack), once per room broadcast, as socket.io does.
+  Writing to the sockets is not simulated. (The results below were
+  measured when the server still sent JSON.)
 - `Date.now` is a virtual clock and `Math.random` is seeded, so a run is
   repeatable. The state checksum at the end must stay the same when a
   change only makes the code faster.
@@ -95,52 +96,52 @@ work here has little to gain.
 ## Snapshot size on the wire
 
 A battle-royale snapshot (`br:snapshot`) goes to every player in the
-match 30 times a second. Measured on 240 snapshots from the benchmark (20
-ships, 152 bullets):
+match 30 times a second. Two changes brought it from 28 KB to under 4 KB.
+Measured with the benchmark (20 ships, 152 bullets, mean of 240
+snapshots):
 
-| Encoding | Bytes per snapshot | vs JSON | Encode time per snapshot |
-|---|---|---|---|
-| JSON (socket.io default parser, current) | 28,334 | — | 27–64 µs |
-| msgpack (`socket.io-msgpack-parser`, notepack.io) | 17,849 | −37% | 90–168 µs |
-| msgpack with 32-bit floats (estimate) | 15,031 | −47% | — |
-| JSON with permessage-deflate | 9,369 | −67% | +455–800 µs, per socket |
-| Fixed binary layout (estimate, see below) | 3,800 | −87% | — |
+| | Snapshot | Per player, snapshots + world events |
+|---|---|---|
+| JSON, bullets in every snapshot | 28,334 B | 832 KiB/s |
+| JSON, bullets as spawn and removal events | 5,666 B | 166 + 33 = 199 KiB/s |
+| msgpack from the server (current) | 3,796 B | 111 + 24 = 135 KiB/s |
 
-Bullets are 80% of the snapshot: 149 bytes each in JSON and 92 bytes in
-msgpack. The same snapshot without bullets is 5,680 bytes in JSON and
-3,805 bytes in msgpack. Use these numbers to scale to other bullet
-counts: JSON is about 5.7 KB plus 149 bytes per bullet.
+At 20 players a full match at peak load now sends about 2.7 MB/s, down
+from about 17 MB/s. Real matches have fewer bullets, because ammo is
+limited.
 
-Per match at peak load, with 20 receivers at 30 snapshots a second, JSON
-sends about 17 MB/s (136 Mbit/s). msgpack sends about 10.7 MB/s. Real
-matches have fewer bullets, because ammo is limited, but bandwidth runs
-out long before CPU does.
+- **Bullets out of the snapshot.** Bullets were 80% of it: 149 bytes each
+  in JSON, sent again in every snapshot while the bullet flew. A bullet
+  flies in a straight line at a fixed speed, so the server now sends a
+  `bullet-spawned` world event when it is fired and a `bullet-removed`
+  event, with the cause, when it ends. The client moves it in between
+  (see the netcode guide). The simulation did not change: the state
+  checksum stayed `b799844f`.
+- **msgpack from the server.** `socket.io-msgpack-parser` saves about a
+  third of what is left. notepack.io writes every non-integer as a 64-bit
+  float, so values arrive exactly as the server has them. Encoding takes
+  about three times as long as `JSON.stringify` (25 µs against 7 µs per
+  snapshot), once per broadcast. Clients still send JSON: notepack.io
+  allocates and fills whatever length a frame declares, so a 6-byte frame
+  could make the server allocate and zero 4 GB. The server never decodes
+  msgpack.
 
-Notes on each option:
+Options measured but not taken:
 
-- **msgpack** is a drop-in change. Install `socket.io-msgpack-parser` and
-  pass it as `parser` to both the server and the client. It saves 37%.
-  notepack.io writes every non-integer as a 64-bit float, and the long
-  string IDs and key names stay. Encoding takes about three times as long
-  as `JSON.stringify`, but it runs once per broadcast, so it costs about
-  3–5 ms per second per match.
 - **32-bit floats** need an encoder that supports them, such as
-  `@msgpack/msgpack` with `forceFloat32`. Positions then change by up to
+  `@msgpack/msgpack` with `forceFloat32`. With bullets in the snapshot
+  they saved another 16% over msgpack. Positions then change by up to
   about 0.0001 px. The server keeps the exact values, so client
-  reconciliation would see tiny corrections. The values are no longer
-  identical.
-- **permessage-deflate** saves the most of the drop-in options, but ws
-  compresses every message once per socket. A room broadcast to 20 players
-  would cost 9–16 ms of CPU per snapshot, or 270–480 ms per second per
-  match. Not usable for snapshots.
-- **Fixed binary layout** is a sketch, not implemented: an 8-byte header,
-  29 bytes per player (slot index, x/y/vx/vy/angle as float32, health,
-  ammo, recovery ticks, last input sequence, thrusting) and 21 bytes per
-  bullet (counter ID, owner slot index, x/y/vx/vy as float32). It needs a
-  hand-written encoder and decoder on both sides, a stable player index
-  instead of string IDs, and 32-bit floats.
-- **Bullets out of the snapshot**: bullets fly in straight lines at a
-  fixed speed, so the client can move them itself from a spawn event, as
-  it already does for asteroids and pickups. That removes 80% of the
-  bytes with any encoding. It is a protocol change, not an encoding
-  change.
+  reconciliation would see tiny corrections.
+- **permessage-deflate** compresses the JSON snapshot to a third (1,850 B
+  now), but ws compresses every message once per socket. With bullets in
+  the snapshot, a room broadcast to 20 players cost 9–16 ms of CPU per
+  snapshot, or 270–480 ms per second per match. Not usable for snapshots.
+- **Fixed binary layout** is a sketch: an 8-byte header and 29 bytes per
+  player (slot index, x/y/vx/vy/angle as float32, health, ammo, recovery
+  ticks, last input sequence, thrusting), about 590 B for 20 players. It
+  needs a hand-written encoder and decoder on both sides, a stable player
+  index instead of string IDs, and 32-bit floats.
+- **Static fields.** Every snapshot repeats each player's `shipVariant`
+  and `slot`, which never change during a match: about 47 bytes of JSON
+  per player.

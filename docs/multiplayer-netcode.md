@@ -57,7 +57,9 @@ The server is the single source of truth for all game state. It runs the simulat
 3. Asteroids, ammo and health pickups spawn or disappear
 4. Win and loss conditions are checked
 
-Every 2 ticks (~33ms), the server broadcasts a `match:snapshot` with the authoritative state of all players and bullets. Each snapshot carries `sequence`, the server tick it describes.
+Every 2 ticks (~33ms), the server broadcasts a `match:snapshot` (`br:snapshot` in battle royale) with the authoritative state of all players. Each snapshot carries `sequence`, the server tick it describes.
+
+Everything else goes out as world events (`match:world-events`, `br:world-events`) on the tick it happens: asteroids, pickups and bullets spawning and being removed. Each payload carries `sequence`, the tick of its events, and `worldVersion`, which counts payloads. A client that re-attaches after a reconnect or a handoff gets the whole world, bullets included, in `match:resumed`.
 
 **Files:** `server/src/realtime/matchHost.ts` — tick loop and `playerStepsForTick()`; `server/src/multiplayerService.ts` and `server/src/battleRoyaleService.ts` — `stepActive()`
 
@@ -236,9 +238,11 @@ The clock never jumps. When the estimate changes, the timeline runs up to 10% fa
 
 ### Bullets
 
-Bullets fly in a straight line, so projecting the newest snapshot forward is exact. They are drawn at the current server tick, with no interpolation delay.
+Snapshots carry no bullets. A bullet flies in a straight line at a fixed speed, so the server sends it twice: a `bullet-spawned` event with the bullet as it left the muzzle, and a `bullet-removed` event with the cause (`asteroid`, `ship`, `edge` or `expired`). The server moves a bullet one step on the tick it is fired, so the muzzle position is where it was on the tick before.
 
-**File:** `client/src/netcode/remoteEntities.ts` — `sampleBullets()`
+`BulletTracker` keeps each bullet with the tick its position belongs to, and places it at any tick from there. Bullets are drawn at the current server tick, with no interpolation delay, and at most 8 ticks past the newest snapshot. During a countdown, when a restored match waits for its players, the server holds bullets still, so each countdown snapshot re-anchors them.
+
+**Files:** `client/src/netcode/bulletTracker.ts`; `client/src/netcode/remoteEntities.ts` — `sampleBullets()`
 
 ## Network Notes
 
@@ -249,6 +253,14 @@ The client sends every tick's input, about 60 small messages per second. Sending
 ### Snapshot Rate
 
 The server sends snapshots every 2 ticks (~33ms, 30 snapshots/second) rather than every tick. This halves bandwidth. Prediction fills the gaps for the player's own ship and the timeline fills them for everything else.
+
+### Wire Format
+
+The server sends msgpack (`socket.io-msgpack-parser`), about a third smaller than JSON for snapshots. Clients send JSON. Their messages are small, and the msgpack decoder trusts the lengths a frame declares, so the server never decodes msgpack from a client. `wireParser.ts` on each side pairs the two parsers.
+
+The client sends `MULTIPLAYER_PROTOCOL_VERSION` in the handshake. The server refuses any other version, and the client then asks the player to reload. Raise the version whenever an older client could no longer play against the server. The deploy activates the new client only after the new server is up.
+
+**Files:** `server/src/realtime/wireParser.ts`, `client/src/netcode/wireParser.ts`, `server/src/server.ts` — handshake check
 
 ### WebSocket Means TCP
 
@@ -323,9 +335,9 @@ The muzzle follows an ellipse around the hull (`getMuzzleOffset()`), so an aimed
 
 Bullets stay server-authoritative, but waiting a round trip for any response to the trigger feels dead. The client mirrors the server's fire rule (cooldown and ammo) in `predictLocalShot()` and plays the muzzle flash, the sound and the ammo count at once. It records the input sequence of each predicted shot. Reconciliation subtracts the shots the server has not processed yet from the server's ammo count, so the HUD does not flicker back up.
 
-Muzzle flashes for other pilots and all impact effects come from comparing bullet ids between two snapshots: a new id is a shot, a missing id is an impact. A snapshot does not say what a bullet hit, so `resolveBulletImpact()` traces the vanished bullet along its path to find out.
+Muzzle flashes for other pilots and all impact effects come from the bullet events: a `bullet-spawned` event is a shot, a `bullet-removed` event is an impact where the bullet was on that tick, of the kind its cause names.
 
-**Files:** `client/src/multiplayerSession.ts` — `predictLocalShot()`, `playBulletEffects()`, `resolveBulletImpact()`; `client/src/weaponEffects.ts` — bolt, muzzle flash, impact and reticle drawing
+**Files:** `client/src/multiplayerSession.ts` — `predictLocalShot()`, `applyBulletEvents()`; `client/src/weaponEffects.ts` — bolt, muzzle flash, impact and reticle drawing
 
 ## What's NOT Predicted
 
@@ -347,6 +359,7 @@ Feel is hard to argue about, so the netcode is measured.
 - how far the server moved the predicted ship at each snapshot
 - how far each drawn frame strays from steady motion, for the own ship and for the opponent
 - how many inputs the server applied to a ship per snapshot
+- how far the bullets the client rebuilt from world events are from the server's, at each snapshot (zero: same bullets, same places)
 
 `server/test/duelNetcode.test.ts` turns those into requirements. The numbers below are one pilot's view of a 20-second duel over a link with 40ms latency each way and 0 to 15ms of jitter, both ships circling at about 4px per tick:
 
@@ -410,6 +423,8 @@ Projecting a ship forward from the moment its snapshot arrived turns every late 
 | `client/src/netcode/renderSmoother.ts` | Smooth drawing of the predicted ship |
 | `client/src/netcode/serverTimeline.ts` | Which server moment to draw |
 | `client/src/netcode/remoteEntities.ts` | Other ships and bullets at that moment |
+| `client/src/netcode/bulletTracker.ts` | Bullets rebuilt from spawn and removal events |
+| `server/src/realtime/wireParser.ts`, `client/src/netcode/wireParser.ts` | msgpack from the server, JSON from clients |
 | `client/src/input.ts` | Keyboard/touch/pointer input capture |
 | `client/src/weaponEffects.ts` | Client-only shot visuals |
 | `server/test/netcodeHarness.ts` | The simulated duel used to measure all of this |
