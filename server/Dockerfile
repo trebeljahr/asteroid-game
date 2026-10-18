@@ -47,6 +47,11 @@ COPY --from=prod-deps /app/server/node_modules ./server/node_modules
 COPY --from=build /app/shared/package*.json ./shared/
 COPY --from=build /app/package*.json ./
 
+# Reported on /health and /trpc/health. Last, so a new commit reuses the
+# layers above.
+ARG COMMIT_SHA=""
+ENV COMMIT_SHA=$COMMIT_SHA
+
 USER node
 
 EXPOSE 9777

@@ -44,8 +44,10 @@ export const createAppRouter = (
   achievementService: AchievementService,
 ) => {
   return t.router({
+    // `version` is the commit this server was built from. CI waits for it
+    // before it switches the client (served by a Cloudflare Worker).
     health: t.procedure.query(() => {
-      return { ok: true };
+      return { ok: true, version: process.env.COMMIT_SHA ?? null };
     }),
 
     user: t.router({
