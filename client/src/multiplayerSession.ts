@@ -42,11 +42,13 @@ import {
   type MatchSnapshotPayload,
   type MatchWorldEventsPayload,
   type MatchWorldRuntime,
+  MULTIPLAYER_PROTOCOL_VERSION,
   type MultiplayerRuntimeConfig,
   PLAYER_DAMAGE_RECOVERY_TICKS,
   PLAYER_MAX_AMMO,
   PLAYER_MAX_HEALTH,
   type PlayerSlot,
+  PROTOCOL_MISMATCH_ERROR,
   type RuntimePlayerState,
   removeAmmoFromWorld,
   removeAsteroidFromWorld,
@@ -486,6 +488,7 @@ class MultiplayerClientSession {
       autoConnect: false,
       auth: {
         deviceToken: getOrCreateDeviceToken(),
+        protocol: MULTIPLAYER_PROTOCOL_VERSION,
       },
       reconnectionDelay: RECONNECT_RETRY_MS,
       reconnectionDelayMax: 2000,
@@ -511,8 +514,20 @@ class MultiplayerClientSession {
       void this.joinQueue();
     });
 
-    socket.on("connect_error", () => {
+    socket.on("connect_error", (error) => {
       if (!this.isMultiplayerModeActive() || this.isLeavingMode) {
+        return;
+      }
+
+      if (error.message === PROTOCOL_MISMATCH_ERROR) {
+        // The server speaks another protocol version. Reconnecting cannot
+        // fix that; only a reload loads the matching client.
+        if (this.viewState.match !== null) {
+          clearShipInput();
+          this.resetViewState();
+        }
+        this.viewState.errorMessage = "The game was updated. Reload the page to play online.";
+        this.viewState.status = "error";
         return;
       }
 

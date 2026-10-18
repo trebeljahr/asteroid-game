@@ -6,7 +6,12 @@ import * as trpcExpress from "@trpc/server/adapters/express";
 import cors from "cors";
 import express from "express";
 import { Server } from "socket.io";
-import type { ClientToServerEvents, ServerToClientEvents } from "../../shared/src";
+import {
+  type ClientToServerEvents,
+  MULTIPLAYER_PROTOCOL_VERSION,
+  PROTOCOL_MISMATCH_ERROR,
+  type ServerToClientEvents,
+} from "../../shared/src";
 import { achievementService } from "./achievementService";
 import { BattleRoyaleService } from "./battleRoyaleService";
 import { getPool } from "./db";
@@ -80,6 +85,11 @@ if (existsSync(clientDistPath)) {
 io.use(async (socket, next) => {
   if (draining) {
     next(new Error("Server restarting; reconnect shortly"));
+    return;
+  }
+  // Clients built before version 2 send no protocol at all.
+  if (socket.handshake.auth?.protocol !== MULTIPLAYER_PROTOCOL_VERSION) {
+    next(new Error(PROTOCOL_MISMATCH_ERROR));
     return;
   }
   const token = extractDeviceToken(socket.handshake.auth?.deviceToken);

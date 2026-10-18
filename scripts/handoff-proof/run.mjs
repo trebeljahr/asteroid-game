@@ -198,7 +198,8 @@ class SimClient {
     this.resumeTimeouts = 0;
     this.thrust = false;
     this.socket = connect(`http://127.0.0.1:${proxyPort}`, {
-      auth: { deviceToken: this.deviceToken },
+      // MULTIPLAYER_PROTOCOL_VERSION in shared/src/multiplayerCore.ts.
+      auth: { deviceToken: this.deviceToken, protocol: 2 },
       autoConnect: false,
       reconnectionDelay: 400,
       reconnectionDelayMax: 2000,

@@ -285,6 +285,14 @@ export const MULTIPLAYER_SHIP_VARIANTS = [
   "solar-sloop",
   "starfin-drifter",
 ] as const satisfies readonly ShipVariant[];
+/**
+ * Version of the socket messages. The client sends it in the handshake
+ * (`auth.protocol`) and the server refuses any other version with
+ * PROTOCOL_MISMATCH_ERROR. Raise it whenever an older client could no
+ * longer play against the server, or the other way round.
+ */
+export const MULTIPLAYER_PROTOCOL_VERSION = 2;
+export const PROTOCOL_MISMATCH_ERROR = "protocol-mismatch";
 export const TICK_INTERVAL_MS = 1000 / 60;
 export const SNAPSHOT_INTERVAL_TICKS = 2;
 export const MATCH_COUNTDOWN_MS = 2500;
