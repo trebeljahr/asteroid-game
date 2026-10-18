@@ -55,7 +55,10 @@ import {
   spawnBattleRoyaleAsteroid,
   spawnBattleRoyaleHeart,
   stepPlayerState,
+  type WorldAmmoState,
+  type WorldAsteroidState,
   type WorldEvent,
+  type WorldHeartState,
 } from "../../shared/src";
 import type { MatchResultEntry } from "./achievementService";
 import { hashResumeToken, newMatchId, newPlayerId, newResumeToken } from "./realtime/ids";
@@ -99,6 +102,12 @@ const brSnapshotSchema = baseSnapshotSchema.extend({
 
 export const LOBBY_ROOM_ID = "battle-royale:lobby";
 export const LOBBY_LEASE_NAME = "lobby:battle-royale";
+
+// Spatial query results, reused for every query of a tick. Each loop reads
+// a result to the end before it runs the next query.
+const asteroidScratch: WorldAsteroidState[] = [];
+const heartScratch: WorldHeartState[] = [];
+const ammoScratch: WorldAmmoState[] = [];
 
 const roomIdFor = (matchId: string) => `battle-royale:${matchId}`;
 
@@ -520,6 +529,7 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
         participant.state.y,
         getShipCollisionBoundingDiameter(participant.state.shipVariant),
         BATTLE_ROYALE_ARENA,
+        asteroidScratch,
       );
       for (const asteroid of nearbyAsteroids) {
         if (destroyedAsteroidIds.has(asteroid.id)) continue;
@@ -559,6 +569,7 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
         bullet.y,
         BULLET_DIAMETER,
         BATTLE_ROYALE_ARENA,
+        asteroidScratch,
       );
       for (const asteroid of nearbyAsteroids) {
         if (
@@ -634,6 +645,7 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
         participant.state.y,
         getShipCollisionBoundingDiameter(participant.state.shipVariant),
         BATTLE_ROYALE_ARENA,
+        heartScratch,
       );
       for (const heart of nearby) {
         if (collected.has(heart.id)) continue;
@@ -667,6 +679,7 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
         participant.state.y,
         getShipCollisionBoundingDiameter(participant.state.shipVariant),
         BATTLE_ROYALE_ARENA,
+        ammoScratch,
       );
       for (const packet of nearby) {
         if (collected.has(packet.id)) continue;

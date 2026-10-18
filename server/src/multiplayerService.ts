@@ -51,7 +51,10 @@ import {
   spawnAsteroidFromRandom,
   spawnHeartFromRandom,
   stepPlayerState,
+  type WorldAmmoState,
+  type WorldAsteroidState,
   type WorldEvent,
+  type WorldHeartState,
 } from "../../shared/src";
 import type { MatchResultEntry } from "./achievementService";
 import { hashResumeToken, newMatchId, newPlayerId, newResumeToken } from "./realtime/ids";
@@ -68,6 +71,12 @@ import type { LeaseFence, Ticket } from "./realtime/store";
 
 type DuelParticipant = HostParticipant;
 type DuelMatch = HostMatch<DuelParticipant>;
+
+// Spatial query results, reused for every query of a tick. Each loop reads
+// a result to the end before it runs the next query.
+const asteroidScratch: WorldAsteroidState[] = [];
+const heartScratch: WorldHeartState[] = [];
+const ammoScratch: WorldAmmoState[] = [];
 
 const duelSnapshotSchema = baseSnapshotSchema.extend({
   mode: z.literal("duel"),
@@ -368,6 +377,7 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
         participant.state.y,
         getShipCollisionBoundingDiameter(participant.state.shipVariant),
         MULTIPLAYER_ARENA,
+        heartScratch,
       );
 
       for (let heartIndex = 0; heartIndex < nearbyHearts.length; heartIndex++) {
@@ -415,6 +425,7 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
         participant.state.y,
         getShipCollisionBoundingDiameter(participant.state.shipVariant),
         MULTIPLAYER_ARENA,
+        ammoScratch,
       );
 
       for (let ammoPacketIndex = 0; ammoPacketIndex < nearbyAmmoPackets.length; ammoPacketIndex++) {
@@ -486,6 +497,7 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
         bullet.y,
         BULLET_DIAMETER,
         MULTIPLAYER_ARENA,
+        asteroidScratch,
       );
 
       for (let asteroidIndex = 0; asteroidIndex < nearbyAsteroids.length; asteroidIndex++) {
@@ -557,6 +569,7 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
         participant.state.y,
         getShipCollisionBoundingDiameter(participant.state.shipVariant),
         MULTIPLAYER_ARENA,
+        asteroidScratch,
       );
 
       for (let asteroidIndex = 0; asteroidIndex < nearbyAsteroids.length; asteroidIndex++) {

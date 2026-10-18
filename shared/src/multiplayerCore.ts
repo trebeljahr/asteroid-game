@@ -253,7 +253,8 @@ export interface ClientToServerEvents {
   "queue:leave": (ack: (result: QueueLeaveResult) => void) => void;
 }
 
-export type SpatialHash = Map<string, Set<string>>;
+/** Entity IDs by grid cell. Keys come from createHashKey. */
+export type SpatialHash = Map<number, Set<string>>;
 
 export interface MatchWorldRuntime {
   ammoHash: SpatialHash;
@@ -394,8 +395,11 @@ export const circleIntersectsBounds = (
   );
 };
 
+/** Rows per column in a cell key. Keys stay unique for rows within ±32768 cells. */
+const SPATIAL_KEY_STRIDE = 0x10000;
+
 export const createHashKey = (column: number, row: number) => {
-  return `${column}:${row}`;
+  return column * SPATIAL_KEY_STRIDE + row;
 };
 
 export const createSeededRandom = (seed: number) => {
@@ -717,11 +721,11 @@ export const resolvePlayerCollision = (
 
 export const createEmptyMatchWorld = (): MatchWorldRuntime => {
   return {
-    ammoHash: new Map<string, Set<string>>(),
+    ammoHash: new Map<number, Set<string>>(),
     ammunitionPackets: new Map<string, WorldAmmoState>(),
-    asteroidHash: new Map<string, Set<string>>(),
+    asteroidHash: new Map<number, Set<string>>(),
     asteroids: new Map<string, WorldAsteroidState>(),
-    heartHash: new Map<string, Set<string>>(),
+    heartHash: new Map<number, Set<string>>(),
     hearts: new Map<string, WorldHeartState>(),
   };
 };
@@ -835,12 +839,17 @@ export const applyWorldEvents = (
   }
 };
 
+// The spatial queries below fill and return `out`, cleared first. A hot
+// loop can pass the same array on every call to avoid allocating one per
+// query; the result is then only valid until the next call with it.
+
 export const getNearbyAsteroids = (
   world: MatchWorldRuntime,
   x: number,
   y: number,
   radius: number,
   arena: ArenaConfig = MULTIPLAYER_ARENA,
+  out: WorldAsteroidState[] = [],
 ) => {
   return querySpatialEntities(
     world.asteroidHash,
@@ -850,6 +859,7 @@ export const getNearbyAsteroids = (
     radius,
     ASTEROID_MAX_SIZE,
     arena,
+    out,
   );
 };
 
@@ -859,14 +869,16 @@ export const getNearbyHearts = (
   y: number,
   radius: number,
   arena: ArenaConfig = MULTIPLAYER_ARENA,
+  out: WorldHeartState[] = [],
 ) => {
-  return querySpatialEntities(world.heartHash, world.hearts, x, y, radius, HEART_SIZE, arena);
+  return querySpatialEntities(world.heartHash, world.hearts, x, y, radius, HEART_SIZE, arena, out);
 };
 
 export const getAsteroidsInBounds = (
   world: MatchWorldRuntime,
   bounds: CameraBounds,
   arena: ArenaConfig = MULTIPLAYER_ARENA,
+  out: WorldAsteroidState[] = [],
 ) => {
   return queryEntitiesInBounds(
     world.asteroidHash,
@@ -874,6 +886,7 @@ export const getAsteroidsInBounds = (
     bounds,
     ASTEROID_MAX_SIZE,
     arena,
+    out,
   );
 };
 
@@ -881,8 +894,9 @@ export const getHeartsInBounds = (
   world: MatchWorldRuntime,
   bounds: CameraBounds,
   arena: ArenaConfig = MULTIPLAYER_ARENA,
+  out: WorldHeartState[] = [],
 ) => {
-  return queryEntitiesInBounds(world.heartHash, world.hearts, bounds, HEART_SIZE, arena);
+  return queryEntitiesInBounds(world.heartHash, world.hearts, bounds, HEART_SIZE, arena, out);
 };
 
 export const getNearbyAmmoPackets = (
@@ -891,6 +905,7 @@ export const getNearbyAmmoPackets = (
   y: number,
   radius: number,
   arena: ArenaConfig = MULTIPLAYER_ARENA,
+  out: WorldAmmoState[] = [],
 ) => {
   return querySpatialEntities(
     world.ammoHash,
@@ -900,6 +915,7 @@ export const getNearbyAmmoPackets = (
     radius,
     AMMO_PACKET_MAX_SIZE,
     arena,
+    out,
   );
 };
 
@@ -907,6 +923,7 @@ export const getAmmoPacketsInBounds = (
   world: MatchWorldRuntime,
   bounds: CameraBounds,
   arena: ArenaConfig = MULTIPLAYER_ARENA,
+  out: WorldAmmoState[] = [],
 ) => {
   return queryEntitiesInBounds(
     world.ammoHash,
@@ -914,6 +931,7 @@ export const getAmmoPacketsInBounds = (
     bounds,
     AMMO_PACKET_MAX_SIZE,
     arena,
+    out,
   );
 };
 
@@ -1074,6 +1092,12 @@ export const spawnAmmoFromRandom = (
   return null;
 };
 
+// Reused by the spawn checks, which read each query's result to the end
+// before they run the next one.
+const spawnCheckAsteroids: WorldAsteroidState[] = [];
+const spawnCheckHearts: WorldHeartState[] = [];
+const spawnCheckAmmo: WorldAmmoState[] = [];
+
 export const isAsteroidSpawnValid = (
   world: MatchWorldRuntime,
   playerPositions: ReadonlyArray<{ x: number; y: number }>,
@@ -1095,7 +1119,14 @@ export const isAsteroidSpawnValid = (
     }
   }
 
-  const nearbyAsteroids = getNearbyAsteroids(world, x, y, size + ASTEROID_CLEARANCE, arena);
+  const nearbyAsteroids = getNearbyAsteroids(
+    world,
+    x,
+    y,
+    size + ASTEROID_CLEARANCE,
+    arena,
+    spawnCheckAsteroids,
+  );
   for (let i = 0; i < nearbyAsteroids.length; i++) {
     const asteroid = nearbyAsteroids[i];
     if (
@@ -1112,7 +1143,7 @@ export const isAsteroidSpawnValid = (
     }
   }
 
-  const nearbyHearts = getNearbyHearts(world, x, y, size, arena);
+  const nearbyHearts = getNearbyHearts(world, x, y, size, arena, spawnCheckHearts);
   for (let i = 0; i < nearbyHearts.length; i++) {
     const heart = nearbyHearts[i];
     if (
@@ -1122,7 +1153,7 @@ export const isAsteroidSpawnValid = (
     }
   }
 
-  const nearbyAmmoPackets = getNearbyAmmoPackets(world, x, y, size, arena);
+  const nearbyAmmoPackets = getNearbyAmmoPackets(world, x, y, size, arena, spawnCheckAmmo);
   for (let i = 0; i < nearbyAmmoPackets.length; i++) {
     const ammo = nearbyAmmoPackets[i];
     if (
@@ -1169,7 +1200,7 @@ export const isHeartSpawnValid = (
     }
   }
 
-  const nearbyAsteroids = getNearbyAsteroids(world, x, y, HEART_SIZE, arena);
+  const nearbyAsteroids = getNearbyAsteroids(world, x, y, HEART_SIZE, arena, spawnCheckAsteroids);
   for (let i = 0; i < nearbyAsteroids.length; i++) {
     const asteroid = nearbyAsteroids[i];
     if (
@@ -1186,7 +1217,7 @@ export const isHeartSpawnValid = (
     }
   }
 
-  const nearbyHearts = getNearbyHearts(world, x, y, HEART_SIZE, arena);
+  const nearbyHearts = getNearbyHearts(world, x, y, HEART_SIZE, arena, spawnCheckHearts);
   for (let i = 0; i < nearbyHearts.length; i++) {
     const heart = nearbyHearts[i];
     if (
@@ -1203,7 +1234,7 @@ export const isHeartSpawnValid = (
     }
   }
 
-  const nearbyAmmoPackets = getNearbyAmmoPackets(world, x, y, HEART_SIZE, arena);
+  const nearbyAmmoPackets = getNearbyAmmoPackets(world, x, y, HEART_SIZE, arena, spawnCheckAmmo);
   for (let i = 0; i < nearbyAmmoPackets.length; i++) {
     const ammo = nearbyAmmoPackets[i];
     if (
@@ -1244,7 +1275,7 @@ export const isAmmoSpawnValid = (
     }
   }
 
-  const nearbyAsteroids = getNearbyAsteroids(world, x, y, size, arena);
+  const nearbyAsteroids = getNearbyAsteroids(world, x, y, size, arena, spawnCheckAsteroids);
   for (let i = 0; i < nearbyAsteroids.length; i++) {
     const asteroid = nearbyAsteroids[i];
     if (
@@ -1261,7 +1292,7 @@ export const isAmmoSpawnValid = (
     }
   }
 
-  const nearbyHearts = getNearbyHearts(world, x, y, size, arena);
+  const nearbyHearts = getNearbyHearts(world, x, y, size, arena, spawnCheckHearts);
   for (let i = 0; i < nearbyHearts.length; i++) {
     const heart = nearbyHearts[i];
     if (
@@ -1278,7 +1309,7 @@ export const isAmmoSpawnValid = (
     }
   }
 
-  const nearbyAmmoPackets = getNearbyAmmoPackets(world, x, y, size, arena);
+  const nearbyAmmoPackets = getNearbyAmmoPackets(world, x, y, size, arena, spawnCheckAmmo);
   for (let i = 0; i < nearbyAmmoPackets.length; i++) {
     const ammo = nearbyAmmoPackets[i];
     if (
@@ -1364,37 +1395,10 @@ const removeEntityFromSpatialHash = (
   }
 };
 
-const queryEntityIds = (
-  hash: SpatialHash,
-  x: number,
-  y: number,
-  radius: number,
-  maxEntitySize: number,
-  arena: ArenaConfig,
-) => {
-  const searchPadding = radius + maxEntitySize / 2 + SPATIAL_QUERY_PADDING;
-  const minColumn = Math.floor((x - searchPadding + arena.width / 2) / SPATIAL_CELL_SIZE);
-  const maxColumn = Math.floor((x + searchPadding + arena.width / 2) / SPATIAL_CELL_SIZE);
-  const minRow = Math.floor((y - searchPadding + arena.height / 2) / SPATIAL_CELL_SIZE);
-  const maxRow = Math.floor((y + searchPadding + arena.height / 2) / SPATIAL_CELL_SIZE);
-  const entityIds = new Set<string>();
-
-  for (let row = minRow; row <= maxRow; row++) {
-    for (let column = minColumn; column <= maxColumn; column++) {
-      const bucket = hash.get(createHashKey(column, row));
-      if (bucket === undefined) {
-        continue;
-      }
-
-      bucket.forEach((entityId) => {
-        entityIds.add(entityId);
-      });
-    }
-  }
-
-  return Array.from(entityIds);
-};
-
+/**
+ * Fills `out` with the entities in the cells around (x, y), each once, in
+ * row-major cell order and insertion order within a cell.
+ */
 const querySpatialEntities = <T extends { id: string }>(
   hash: SpatialHash,
   entities: Map<string, T>,
@@ -1403,18 +1407,34 @@ const querySpatialEntities = <T extends { id: string }>(
   radius: number,
   maxEntitySize: number,
   arena: ArenaConfig,
+  out: T[],
 ) => {
-  const entityIds = queryEntityIds(hash, x, y, radius, maxEntitySize, arena);
-  const nearbyEntities: T[] = [];
+  const searchPadding = radius + maxEntitySize / 2 + SPATIAL_QUERY_PADDING;
+  const minColumn = Math.floor((x - searchPadding + arena.width / 2) / SPATIAL_CELL_SIZE);
+  const maxColumn = Math.floor((x + searchPadding + arena.width / 2) / SPATIAL_CELL_SIZE);
+  const minRow = Math.floor((y - searchPadding + arena.height / 2) / SPATIAL_CELL_SIZE);
+  const maxRow = Math.floor((y + searchPadding + arena.height / 2) / SPATIAL_CELL_SIZE);
+  out.length = 0;
 
-  for (let i = 0; i < entityIds.length; i++) {
-    const entity = entities.get(entityIds[i]);
-    if (entity !== undefined) {
-      nearbyEntities.push(entity);
+  for (let row = minRow; row <= maxRow; row++) {
+    for (let column = minColumn; column <= maxColumn; column++) {
+      const bucket = hash.get(createHashKey(column, row));
+      if (bucket === undefined) {
+        continue;
+      }
+
+      for (const entityId of bucket) {
+        const entity = entities.get(entityId);
+        // An entity sits in one cell, so the duplicate check almost never
+        // finds anything; it keeps a re-added ID from showing up twice.
+        if (entity !== undefined && !out.includes(entity)) {
+          out.push(entity);
+        }
+      }
     }
   }
 
-  return nearbyEntities;
+  return out;
 };
 
 const queryEntitiesInBounds = <T extends { id: string; size: number; x: number; y: number }>(
@@ -1423,23 +1443,21 @@ const queryEntitiesInBounds = <T extends { id: string; size: number; x: number; 
   bounds: CameraBounds,
   maxEntitySize: number,
   arena: ArenaConfig,
+  out: T[],
 ) => {
   const centerX = (bounds.left + bounds.right) / 2;
   const centerY = (bounds.top + bounds.bottom) / 2;
   const radius = Math.max(bounds.right - bounds.left, bounds.bottom - bounds.top) / 2;
-  const candidateIds = queryEntityIds(hash, centerX, centerY, radius, maxEntitySize, arena);
-  const visibleEntities: T[] = [];
+  querySpatialEntities(hash, entities, centerX, centerY, radius, maxEntitySize, arena, out);
 
-  for (let i = 0; i < candidateIds.length; i++) {
-    const entity = entities.get(candidateIds[i]);
-    if (entity === undefined) {
-      continue;
-    }
-
+  let visibleCount = 0;
+  for (let i = 0; i < out.length; i++) {
+    const entity = out[i];
     if (circleIntersectsBounds(entity.x, entity.y, entity.size, bounds)) {
-      visibleEntities.push(entity);
+      out[visibleCount++] = entity;
     }
   }
+  out.length = visibleCount;
 
-  return visibleEntities;
+  return out;
 };
