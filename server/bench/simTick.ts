@@ -8,6 +8,7 @@ import {
   BATTLE_ROYALE_ARENA,
   BATTLE_ROYALE_MAX_PLAYERS,
   type BattleRoyaleSnapshotPayload,
+  type MatchWorldEventsPayload,
   MULTIPLAYER_SHIP_VARIANTS,
   PLAYER_MAX_AMMO,
   PLAYER_MAX_HEALTH,
@@ -58,7 +59,7 @@ const MEASURED_TICKS = Number(args.ticks);
 const WARMUP_TICKS = Number(args.warmup);
 const SEED = Number(args.seed);
 const SHIPS = BATTLE_ROYALE_MAX_PLAYERS;
-/** One snapshot in this many is kept for the encoding comparison. */
+/** One snapshot (and one world-events payload) in this many is kept for the encoding comparison. */
 const SNAPSHOT_SAMPLE_EVERY = 15;
 
 // Repeatable randomness for world seed, bot waypoints and anything else
@@ -81,6 +82,10 @@ let jsonBytes = 0;
 let emits = 0;
 const snapshotSamples: BattleRoyaleSnapshotPayload[] = [];
 let snapshotCount = 0;
+// Bytes every player receives: each room broadcast reaches each of them once.
+const roomJsonBytes = { snapshots: 0, worldEvents: 0 };
+const worldEventSamples: MatchWorldEventsPayload[] = [];
+let worldEventCount = 0;
 const io = {
   in: () => ({ socketsJoin: () => {}, socketsLeave: () => {} }),
   to: () => ({
@@ -90,8 +95,16 @@ const io = {
       encodeMs += performance.now() - startedAt;
       jsonBytes += wire.length;
       emits++;
-      if (event === "br:snapshot" && snapshotCount++ % SNAPSHOT_SAMPLE_EVERY === 0) {
-        snapshotSamples.push(payload as BattleRoyaleSnapshotPayload);
+      if (event === "br:snapshot") {
+        roomJsonBytes.snapshots += wire.length;
+        if (snapshotCount++ % SNAPSHOT_SAMPLE_EVERY === 0) {
+          snapshotSamples.push(payload as BattleRoyaleSnapshotPayload);
+        }
+      } else if (event === "br:world-events") {
+        roomJsonBytes.worldEvents += wire.length;
+        if (worldEventCount++ % SNAPSHOT_SAMPLE_EVERY === 0) {
+          worldEventSamples.push(payload as MatchWorldEventsPayload);
+        }
       }
     },
   }),
@@ -282,6 +295,9 @@ const main = async () => {
   jsonBytes = 0;
   emits = 0;
   snapshotSamples.length = 0;
+  roomJsonBytes.snapshots = 0;
+  roomJsonBytes.worldEvents = 0;
+  worldEventSamples.length = 0;
 
   const tickMs = new Float64Array(MEASURED_TICKS);
   const world = { ammo: 0, asteroids: 0, bullets: 0, hearts: 0 };
@@ -341,7 +357,22 @@ const main = async () => {
     encodings.deflate += deflated.length;
   }
   const samples = snapshotSamples.length;
-  const lastSnapshot = snapshotSamples[samples - 1];
+
+  // World events go out on most ticks, so their msgpack size is scaled
+  // from a sample instead of encoding all of them.
+  const worldEventEncodings = { json: 0, msgpack: 0 };
+  for (const payload of worldEventSamples) {
+    worldEventEncodings.json += `42${JSON.stringify(["br:world-events", payload])}`.length;
+    worldEventEncodings.msgpack += notepack.encode({
+      data: ["br:world-events", payload],
+      nsp: "/",
+      type: 2,
+    }).length;
+  }
+  const measuredSeconds = (MEASURED_TICKS * TICK_INTERVAL_MS) / 1000;
+  const kbPerSecond = (bytes: number) => bytes / 1024 / measuredSeconds;
+  const snapshotsJsonKbPerSecond = kbPerSecond(roomJsonBytes.snapshots);
+  const worldEventsJsonKbPerSecond = kbPerSecond(roomJsonBytes.worldEvents);
 
   const result = {
     allocatedKbPerTick: allocatedBytes / 1024 / MEASURED_TICKS,
@@ -356,8 +387,21 @@ const main = async () => {
     jsonKbPerSecond: (jsonBytes / 1024 / MEASURED_TICKS) * (1000 / TICK_INTERVAL_MS),
     measuredTicks: MEASURED_TICKS,
     seed: SEED,
+    perPlayerKbPerSecond: {
+      json: {
+        snapshots: snapshotsJsonKbPerSecond,
+        worldEvents: worldEventsJsonKbPerSecond,
+      },
+      msgpack: {
+        snapshots: snapshotsJsonKbPerSecond * (encodings.msgpack / encodings.json),
+        worldEvents:
+          worldEventsJsonKbPerSecond *
+          (worldEventEncodings.json === 0
+            ? 1
+            : worldEventEncodings.msgpack / worldEventEncodings.json),
+      },
+    },
     snapshot: {
-      bulletsInLast: lastSnapshot?.bullets.length ?? 0,
       bytes: {
         deflate: encodings.deflate / samples,
         json: encodings.json / samples,
@@ -408,6 +452,13 @@ const main = async () => {
     console.log(`allocated        ${result.allocatedKbPerTick.toFixed(1)} KiB per tick`);
     console.log(
       `snapshot bytes   json ${result.snapshot.bytes.json.toFixed(0)}  msgpack ${result.snapshot.bytes.msgpack.toFixed(0)}  json+deflate ${result.snapshot.bytes.deflate.toFixed(0)}  (mean of ${samples}; encode µs json ${result.snapshot.encodeUs.json.toFixed(1)}, msgpack ${result.snapshot.encodeUs.msgpack.toFixed(1)}, json+deflate ${result.snapshot.encodeUs.deflate.toFixed(1)})`,
+    );
+    const perPlayer = (encoding: "json" | "msgpack") => {
+      const { snapshots, worldEvents } = result.perPlayerKbPerSecond[encoding];
+      return `${encoding} ${snapshots.toFixed(1)} + ${worldEvents.toFixed(1)} = ${(snapshots + worldEvents).toFixed(1)}`;
+    };
+    console.log(
+      `per player KiB/s ${perPlayer("json")}  ${perPlayer("msgpack")}  (snapshots + world events)`,
     );
     console.log(`state checksum   ${result.checksum}`);
   }

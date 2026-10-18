@@ -124,9 +124,12 @@ export class WeaponEffectsSystem {
     this.sparks = [];
   }
 
-  /** Remember where a bullet entered play, so its trail never reaches behind the muzzle. */
+  /**
+   * Remember where a bullet entered play, so its trail never reaches behind
+   * the muzzle. `bullet` is as it left the muzzle.
+   */
   trackBullet(bullet: MatchBulletSnapshot) {
-    this.bulletOrigins.set(bullet.id, { x: bullet.x - bullet.vx, y: bullet.y - bullet.vy });
+    this.bulletOrigins.set(bullet.id, { x: bullet.x, y: bullet.y });
   }
 
   forgetBullet(bulletId: string) {

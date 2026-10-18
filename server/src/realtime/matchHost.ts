@@ -24,6 +24,7 @@ import {
   type ServerToClientEvents,
   type ShipCollider,
   type ShipInputState,
+  snapshotBulletState,
   TICK_INTERVAL_MS,
   updateShipCollider,
   type WorldEvent,
@@ -551,6 +552,7 @@ export abstract class MatchHostBase<P extends HostParticipant, M extends HostMat
     return {
       ammo: Array.from(match.world.ammunitionPackets.values()),
       asteroids: Array.from(match.world.asteroids.values()),
+      bullets: match.bullets.map(snapshotBulletState),
       hearts: Array.from(match.world.hearts.values()),
       worldVersion: match.worldVersion,
     };

@@ -61,6 +61,9 @@ export interface RuntimeBulletState extends MatchBulletSnapshot {
   ttlTicks: number;
 }
 
+/** Why the server removed a bullet. */
+export type BulletRemovalCause = "asteroid" | "edge" | "expired" | "ship";
+
 export interface WorldAsteroidState {
   baseRotation: number;
   hitPoints: number;
@@ -111,6 +114,19 @@ export type WorldEvent =
   | {
       ammoId: string;
       type: "ammo-removed";
+    }
+  | {
+      /**
+       * The bullet as it left the muzzle, before the one step it moves on
+       * the tick it was fired: at tick t it is at x + vx * (t - sequence + 1).
+       */
+      bullet: MatchBulletSnapshot;
+      type: "bullet-spawned";
+    }
+  | {
+      bulletId: string;
+      cause: BulletRemovalCause;
+      type: "bullet-removed";
     };
 
 export interface MatchmakingStatusPayload {
@@ -134,6 +150,8 @@ export interface MatchFoundPayload {
 export interface MatchWorldEventsPayload {
   events: WorldEvent[];
   matchId: string;
+  /** The server tick the events happened on. */
+  sequence: number;
   worldVersion: number;
 }
 
@@ -141,8 +159,12 @@ export interface MatchSnapshotPlayerDebug {
   inputQueueDepth: number;
 }
 
+/**
+ * Ships at one server tick. Bullets are not in it: they fly in straight
+ * lines, so clients move them from their bullet-spawned world event until
+ * the bullet-removed one.
+ */
 export interface MatchSnapshotPayload {
-  bullets: MatchBulletSnapshot[];
   countdownMs: number;
   debug?: Record<string, MatchSnapshotPlayerDebug>;
   matchId: string;
@@ -222,6 +244,8 @@ export interface MatchResumedPayload {
   world: {
     ammo: WorldAmmoState[];
     asteroids: WorldAsteroidState[];
+    /** Bullets in flight, at the tick of `snapshot.sequence`. */
+    bullets: MatchBulletSnapshot[];
     hearts: WorldHeartState[];
     worldVersion: number;
   };
@@ -571,6 +595,17 @@ export const isRuntimeBulletOutOfBounds = (
   );
 };
 
+export const snapshotBulletState = (bullet: RuntimeBulletState): MatchBulletSnapshot => {
+  return {
+    id: bullet.id,
+    ownerId: bullet.ownerId,
+    vx: bullet.vx,
+    vy: bullet.vy,
+    x: bullet.x,
+    y: bullet.y,
+  };
+};
+
 export const snapshotPlayerState = (state: RuntimePlayerState): MatchPlayerSnapshot => {
   return {
     angle: state.angle,
@@ -833,6 +868,10 @@ export const applyWorldEvent = (
       return;
     case "ammo-removed":
       removeAmmoFromWorld(world, event.ammoId, arena);
+      return;
+    case "bullet-spawned":
+    case "bullet-removed":
+      // Bullets are not part of the world runtime.
       return;
   }
 };

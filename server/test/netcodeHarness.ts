@@ -1,12 +1,15 @@
 import type { MockTimers } from "node:test";
 
+import { BulletTracker } from "../../client/src/netcode/bulletTracker";
 import { replayPendingInputs } from "../../client/src/netcode/reconcile";
 import { sampleRemotePlayers } from "../../client/src/netcode/remoteEntities";
 import { RenderSmoother } from "../../client/src/netcode/renderSmoother";
 import { ServerTimeline } from "../../client/src/netcode/serverTimeline";
 import {
   FixedStepClock,
+  type MatchBulletSnapshot,
   type MatchSnapshotPayload,
+  type MatchWorldEventsPayload,
   MULTIPLAYER_ARENA,
   type RuntimePlayerState,
   type ShipInputState,
@@ -45,6 +48,14 @@ export interface PilotOptions {
 export interface PilotReport {
   /** Inputs the server applied to this ship between consecutive snapshots. Two when even. */
   appliedPerSnapshot: number[];
+  /**
+   * Per received snapshot: the largest distance between a bullet the client
+   * rebuilt from world events and the server's bullet at that tick.
+   * Infinity when the two sets of bullet IDs differ.
+   */
+  bulletErrors: number[];
+  /** Bullets compared in bulletErrors. */
+  bulletsCompared: number;
   /** Distance the server moved the predicted ship at each snapshot, in pixels. */
   corrections: number[];
   /** Frames on which the drawn opponent moved against its own velocity. */
@@ -59,6 +70,8 @@ export interface DuelReport {
   /** The match ended before the run did, for example because a ship was destroyed. */
   endedEarly: boolean;
   frames: number;
+  /** The server's own bullets at each snapshot tick, by tick. */
+  serverBullets: Map<number, MatchBulletSnapshot[]>;
   /** Final authoritative ship states, by socket ID. */
   serverPlayers: Record<string, RuntimePlayerState>;
   /** Every snapshot the server emitted, before any network delay. */
@@ -100,6 +113,7 @@ export const runDuel = async (
   };
 
   const serverSnapshots: MatchSnapshotPayload[] = [];
+  const serverBullets = new Map<number, MatchBulletSnapshot[]>();
   const listeners = new Map<string, (event: string, payload: unknown) => void>();
   const profiles = new Map<string, LinkProfile>(
     SOCKET_IDS.map((socketId, index) => [socketId, options.pilots[index].link]),
@@ -110,7 +124,12 @@ export const runDuel = async (
       emit: (event: string, payload: unknown) => {
         const wire = JSON.stringify(payload);
         if (event === "match:snapshot") {
-          serverSnapshots.push(JSON.parse(wire));
+          const snapshot = JSON.parse(wire) as MatchSnapshotPayload;
+          serverSnapshots.push(snapshot);
+          const state = duel.snapshotFor(snapshot.matchId)?.state as
+            | { bullets: MatchBulletSnapshot[] }
+            | undefined;
+          serverBullets.set(snapshot.sequence, state?.bullets ?? []);
         }
         const receivers = target.startsWith("multiplayer:") ? SOCKET_IDS : [target];
         for (const socketId of receivers) {
@@ -142,6 +161,8 @@ export const runDuel = async (
     const pilot = options.pilots[index];
     const report: PilotReport = {
       appliedPerSnapshot: [],
+      bulletErrors: [],
+      bulletsCompared: 0,
       corrections: [],
       opponentBackwardFrames: 0,
       opponentHitches: [],
@@ -150,6 +171,7 @@ export const runDuel = async (
     const clock = new FixedStepClock(TICK_INTERVAL_MS, 6);
     const smoother = new RenderSmoother();
     const timeline = new ServerTimeline<MatchSnapshotPayload>();
+    const bullets = new BulletTracker();
     let predicted: RuntimePlayerState | null = null;
     let pending: Array<{ input: ShipInputState; seq: number }> = [];
     let seq = 0;
@@ -178,12 +200,42 @@ export const runDuel = async (
         seats.set(socketId, payload as { matchId: string; playerId: string });
         return;
       }
+      if (event === "match:world-events") {
+        // What the client does with bullet events; the rest only feeds effects.
+        const { events, sequence } = payload as MatchWorldEventsPayload;
+        for (const worldEvent of events) {
+          if (worldEvent.type === "bullet-spawned") bullets.spawn(worldEvent.bullet, sequence);
+          if (worldEvent.type === "bullet-removed") bullets.remove(worldEvent.bulletId, sequence);
+        }
+        return;
+      }
       if (event !== "match:snapshot") return;
       const snapshot = payload as MatchSnapshotPayload;
       if (latest !== null && snapshot.sequence <= latest.sequence) return;
       latest = snapshot;
       timeline.observe(snapshot.sequence, snapshot, now());
-      if (snapshot.phase !== "active") return;
+      if (snapshot.phase !== "active") {
+        bullets.hold(snapshot.sequence);
+        return;
+      }
+
+      // Ordered delivery: every world event up to this tick is already in.
+      const expected = new Map(
+        (serverBullets.get(snapshot.sequence) ?? []).map((bullet) => [bullet.id, bullet]),
+      );
+      const rebuilt = bullets.sample(snapshot.sequence);
+      let error = rebuilt.length === expected.size ? 0 : Number.POSITIVE_INFINITY;
+      for (const bullet of rebuilt) {
+        const server = expected.get(bullet.id);
+        error = Math.max(
+          error,
+          server === undefined
+            ? Number.POSITIVE_INFINITY
+            : Math.hypot(bullet.x - server.x, bullet.y - server.y),
+        );
+      }
+      report.bulletErrors.push(error);
+      report.bulletsCompared += rebuilt.length;
 
       const self = snapshot.players.find((player) => player.id === seats.get(socketId)?.playerId);
       if (self === undefined) return;
@@ -322,6 +374,7 @@ export const runDuel = async (
     endedEarly,
     frames,
     pilots: Object.fromEntries(pilots.map((pilot) => [pilot.socketId, pilot.report])),
+    serverBullets,
     serverPlayers,
     serverSnapshots,
   };

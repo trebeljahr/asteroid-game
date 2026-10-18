@@ -3,9 +3,9 @@ import {
   type MatchBulletSnapshot,
   type MatchPlayerSnapshot,
   type MatchSnapshotPayload,
-  projectBulletSnapshot,
   projectPlayerSnapshot,
 } from "../../../shared/src";
+import type { BulletTracker } from "./bulletTracker";
 import { lerpPose } from "./renderSmoother";
 import { MAX_EXTRAPOLATION_TICKS, type TimelineView } from "./serverTimeline";
 
@@ -45,13 +45,16 @@ export const sampleRemotePlayers = (
 };
 
 /**
- * Bullets fly in a straight line, so the newest snapshot can be projected
- * to the current server tick exactly. They need no interpolation delay.
+ * Bullets fly in a straight line, so they can be placed at the current
+ * server tick exactly. They need no interpolation delay. Like ships, they
+ * go no further than a few ticks past the newest snapshot.
  */
 export const sampleBullets = (
-  snapshot: MatchSnapshotPayload,
+  bullets: BulletTracker,
   liveTick: number,
+  newestTick: number,
 ): MatchBulletSnapshot[] => {
-  const ticks = Math.max(-2, Math.min(MAX_EXTRAPOLATION_TICKS, liveTick - snapshot.sequence));
-  return snapshot.bullets.map((bullet) => projectBulletSnapshot(bullet, ticks));
+  return bullets.sample(
+    Math.max(newestTick - 2, Math.min(newestTick + MAX_EXTRAPOLATION_TICKS, liveTick)),
+  );
 };

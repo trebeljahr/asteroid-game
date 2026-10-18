@@ -20,7 +20,6 @@ import {
   isAmmoSpawnValid,
   isAsteroidSpawnValid,
   isHeartSpawnValid,
-  type MatchBulletSnapshot,
   type MatchPhase,
   type MatchPlayerSnapshot,
   type MatchWorldRuntime,
@@ -83,7 +82,6 @@ export interface BattleRoyaleMatchFoundPayload {
 }
 
 export interface BattleRoyaleSnapshotPayload {
-  bullets: MatchBulletSnapshot[];
   countdownMs: number;
   matchId: string;
   phase: MatchPhase;

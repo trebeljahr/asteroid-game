@@ -114,18 +114,40 @@ test("one player's stalling connection does not disturb the other player", async
   // Bullets advance exactly one step per server tick, whatever the players' packets do.
   let checked = 0;
   for (let index = 1; index < report.serverSnapshots.length; index++) {
-    const earlier = report.serverSnapshots[index - 1];
-    const later = report.serverSnapshots[index];
-    const ticks = later.sequence - earlier.sequence;
-    for (const bullet of later.bullets) {
-      const before = earlier.bullets.find((candidate) => candidate.id === bullet.id);
+    const earlierTick = report.serverSnapshots[index - 1].sequence;
+    const laterTick = report.serverSnapshots[index].sequence;
+    const earlier = report.serverBullets.get(earlierTick) ?? [];
+    for (const bullet of report.serverBullets.get(laterTick) ?? []) {
+      const before = earlier.find((candidate) => candidate.id === bullet.id);
       if (before === undefined) continue;
-      assert.ok(Math.abs(bullet.x - before.x - bullet.vx * ticks) < 1e-6);
-      assert.ok(Math.abs(bullet.y - before.y - bullet.vy * ticks) < 1e-6);
+      assert.ok(Math.abs(bullet.x - before.x - bullet.vx * (laterTick - earlierTick)) < 1e-6);
+      assert.ok(Math.abs(bullet.y - before.y - bullet.vy * (laterTick - earlierTick)) < 1e-6);
       checked++;
     }
   }
   assert.ok(checked > 100, "bullets were in flight");
+});
+
+test("clients rebuild every bullet from spawn and removal events", async (t) => {
+  for (const link of [fast, stalling]) {
+    const report = await runDuel(t.mock.timers, {
+      activeMs: 10_000,
+      pilots: [
+        { controls: circle(0, "turnLeft"), link },
+        { controls: circle(900, "turnRight"), link: typical },
+      ],
+    });
+    t.mock.timers.reset();
+
+    assert.equal(report.endedEarly, false);
+    for (const pilot of Object.values(report.pilots)) {
+      // At every snapshot the client has exactly the server's bullets, where the server has them.
+      const errors = summarize(pilot.bulletErrors, 1e-6);
+      assert.ok(errors.count > 250, "the match was played");
+      assert.equal(errors.over, 0, `${errors.over} snapshots off, worst ${errors.max} px`);
+      assert.ok(pilot.bulletsCompared > 100, "bullets were in flight");
+    }
+  }
 });
 
 test("the simulation runs at 60 ticks per second", async (t) => {

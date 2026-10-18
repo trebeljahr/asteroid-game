@@ -2,6 +2,7 @@ import p5 from "p5";
 import { io, type Socket } from "socket.io-client";
 
 import {
+  type ArenaConfig,
   addAmmoToWorld,
   addAsteroidToWorld,
   addHeartToWorld,
@@ -12,9 +13,9 @@ import {
   type BattleRoyaleMatchFoundPayload,
   type BattleRoyaleSnapshotPayload,
   BULLET_DIAMETER,
+  type BulletRemovalCause,
   type ClientToServerEvents,
   circleOverlapsShipCollider,
-  circlesOverlap,
   createEmptyMatchWorld,
   createInitialBattleRoyaleWorld,
   createInitialMatchWorld,
@@ -58,7 +59,6 @@ import {
   type ShipCollider,
   type ShipInputState,
   type ShipVariant,
-  SNAPSHOT_INTERVAL_TICKS,
   solveAimAngle,
   stepPlayerState,
   TICK_INTERVAL_MS,
@@ -78,6 +78,7 @@ import {
   isMobileDevice,
   isShipActionActive,
 } from "./input";
+import { BulletTracker } from "./netcode/bulletTracker";
 import { createSimulatedLink } from "./netcode/delayLine";
 import { replayPendingInputs } from "./netcode/reconcile";
 import { sampleBullets, sampleRemotePlayers } from "./netcode/remoteEntities";
@@ -171,8 +172,6 @@ const AIM_GUIDE_LENGTH = 300;
 const AIM_STICK_REACH = 1000;
 /** Aim angles go over the wire every tick while firing: three decimals keep them short. */
 const AIM_ANGLE_PRECISION = 1000;
-/** How far past its last snapshot a vanished bullet is traced to find what it hit. */
-const BULLET_IMPACT_SCAN_TICKS = SNAPSHOT_INTERVAL_TICKS + 1;
 /**
  * A server bullet of our own that shows up this soon after a predicted
  * shot already had its muzzle flash drawn.
@@ -286,6 +285,24 @@ const formatPlacement = (placement: number): string => {
   }
 };
 
+/** Where and how a removed bullet ended. An edge hit sits on the arena border. */
+const getBulletImpact = (
+  bullet: MatchBulletSnapshot,
+  cause: BulletRemovalCause,
+  arena: ArenaConfig,
+): { kind: ImpactKind; x: number; y: number } => {
+  if (cause === "edge") {
+    const xLimit = arena.width / 2;
+    const yLimit = arena.height / 2;
+    return {
+      kind: "edge",
+      x: Math.max(-xLimit, Math.min(xLimit, bullet.x)),
+      y: Math.max(-yLimit, Math.min(yLimit, bullet.y)),
+    };
+  }
+  return { kind: cause === "expired" ? "fade" : cause, x: bullet.x, y: bullet.y };
+};
+
 const _sameInputState = (left: ShipInputState, right: ShipInputState) => {
   return (
     left.fire === right.fire &&
@@ -366,6 +383,7 @@ class MultiplayerClientSession {
   private simulatedLink = createSimulatedLink(isDebugToolsEnabled());
   private tickClock = new FixedStepClock(TICK_INTERVAL_MS, MAX_PREDICTION_CATCH_UP_TICKS);
   private timeline = new ServerTimeline<MatchSnapshotPayload>();
+  private bullets = new BulletTracker();
   private thrusters = new Map<string, ThrusterExhaustSystem>();
   private viewState = createInitialViewState();
   private weaponEffects: WeaponEffectsSystem | null = null;
@@ -733,7 +751,6 @@ class MultiplayerClientSession {
       // Adapt the BR snapshot to the duel's MatchSnapshotPayload shape so
       // the render pipeline can be reused as-is.
       const adaptedSnapshot: MatchSnapshotPayload = {
-        bullets: payload.bullets,
         countdownMs: payload.countdownMs,
         matchId: payload.matchId,
         phase: payload.phase,
@@ -762,6 +779,7 @@ class MultiplayerClientSession {
       this.viewState.status = "matched";
 
       if (payload.phase !== "active") {
+        this.bullets.hold(payload.sequence);
         return;
       }
 
@@ -786,6 +804,7 @@ class MultiplayerClientSession {
       if (this.viewState.match.migrating) return;
       if (payload.worldVersion <= this.viewState.match.worldVersion) return;
 
+      this.applyBulletEvents(this.viewState.match, payload.events, payload.sequence);
       this.playWorldEventEffects(this.viewState.match, payload.events);
       applyWorldEvents(this.viewState.match.world, payload.events, this.viewState.match.arena);
       this.viewState.match.worldVersion = payload.worldVersion;
@@ -847,6 +866,7 @@ class MultiplayerClientSession {
         return;
       }
 
+      this.applyBulletEvents(this.viewState.match, payload.events, payload.sequence);
       this.playWorldEventEffects(this.viewState.match, payload.events);
       applyWorldEvents(this.viewState.match.world, payload.events, this.viewState.match.arena);
       this.viewState.match.worldVersion = payload.worldVersion;
@@ -893,6 +913,7 @@ class MultiplayerClientSession {
       // predicting locally would accumulate a buffer that can never be
       // correctly reconciled.
       if (payload.phase !== "active") {
+        this.bullets.hold(payload.sequence);
         return;
       }
 
@@ -1426,7 +1447,7 @@ class MultiplayerClientSession {
     // ships slightly behind it, between two snapshots.
     const liveTick = this.timeline.liveTick(now);
     const predictedTicks = liveTick - match.snapshot.sequence;
-    const renderedBullets = sampleBullets(match.snapshot, liveTick);
+    const renderedBullets = sampleBullets(this.bullets, liveTick, match.snapshot.sequence);
 
     const selfPlayer = this.getRenderedSelf(match, now);
 
@@ -1992,7 +2013,7 @@ class MultiplayerClientSession {
   private drawCollisionDebug(
     p: p5,
     players: MatchPlayerSnapshot[],
-    bullets: MatchSnapshotPayload["bullets"],
+    bullets: MatchBulletSnapshot[],
     asteroids: ReturnType<typeof getAsteroidsInBounds>,
     hearts: ReturnType<typeof getHeartsInBounds>,
     ammoPackets: ReturnType<typeof getAmmoPacketsInBounds>,
@@ -2304,6 +2325,7 @@ class MultiplayerClientSession {
     this.pendingShotSeqs = [];
     this.localFireCooldownTicks = 0;
     this.weaponEffects?.forgetAllBullets();
+    this.bullets.load(payload.world.bullets, payload.snapshot.sequence);
     this.selfSmoother.reset();
     this.timeline.reset();
 
@@ -2401,130 +2423,64 @@ class MultiplayerClientSession {
       }
       this.createShipDestruction(nextPlayer);
     }
-
-    this.playBulletEffects(previousSnapshot, nextSnapshot);
-  }
-
-  /** Muzzle flashes for bullets that appeared, impacts for bullets that are gone. */
-  private playBulletEffects(
-    previousSnapshot: MatchSnapshotPayload,
-    nextSnapshot: MatchSnapshotPayload,
-  ) {
-    const match = this.viewState.match;
-    const effects = this.weaponEffects;
-    if (match === null || effects === null) {
-      return;
-    }
-
-    const previousBulletIds = new Set<string>();
-    for (let i = 0; i < previousSnapshot.bullets.length; i++) {
-      previousBulletIds.add(previousSnapshot.bullets[i].id);
-    }
-
-    const nextBulletIds = new Set<string>();
-    for (let i = 0; i < nextSnapshot.bullets.length; i++) {
-      const bullet = nextSnapshot.bullets[i];
-      nextBulletIds.add(bullet.id);
-      if (previousBulletIds.has(bullet.id)) {
-        continue;
-      }
-
-      effects.trackBullet(bullet);
-      const isLocalBullet = bullet.ownerId === match.playerId;
-      if (isLocalBullet && performance.now() - this.lastLocalShotAt < LOCAL_SHOT_ECHO_MS) {
-        continue;
-      }
-
-      effects.addMuzzleFlash(
-        bullet.ownerId,
-        bullet.x,
-        bullet.y,
-        Math.atan2(bullet.vy, bullet.vx),
-        isLocalBullet ? FRIENDLY_SHOT_PALETTE : HOSTILE_SHOT_PALETTE,
-      );
-      if (this.isInView(bullet.x, bullet.y)) {
-        playSound("shoot");
-      }
-    }
-
-    for (let i = 0; i < previousSnapshot.bullets.length; i++) {
-      const bullet = previousSnapshot.bullets[i];
-      if (nextBulletIds.has(bullet.id)) {
-        continue;
-      }
-
-      effects.forgetBullet(bullet.id);
-      const impact = this.resolveBulletImpact(bullet, match, previousSnapshot.players);
-      const isLocalBullet = bullet.ownerId === match.playerId;
-      effects.addImpact(
-        impact.x,
-        impact.y,
-        Math.atan2(bullet.vy, bullet.vx),
-        isLocalBullet ? FRIENDLY_SHOT_PALETTE : HOSTILE_SHOT_PALETTE,
-        impact.kind,
-      );
-      if (impact.kind === "ship" && isLocalBullet) {
-        this.hitMarkerAt = performance.now();
-      }
-      if (impact.kind !== "fade" && this.isInView(impact.x, impact.y)) {
-        playSound("bulletHit");
-      }
-    }
   }
 
   /**
-   * Snapshots only say that a bullet is gone, not why. Trace it along its
-   * path for the ticks since its last snapshot to find what it ran into.
+   * Move the bullets of one world-events payload in and out of the
+   * tracker: a muzzle flash for every new bullet, an impact where every
+   * removed one ended.
    */
-  private resolveBulletImpact(
-    bullet: MatchBulletSnapshot,
-    match: ActiveMatchState,
-    players: MatchPlayerSnapshot[],
-  ): { kind: ImpactKind; x: number; y: number } {
-    const xLimit = match.arena.width / 2;
-    const yLimit = match.arena.height / 2;
-
-    for (let step = 0; step <= BULLET_IMPACT_SCAN_TICKS * 2; step++) {
-      const ticks = step / 2;
-      const x = bullet.x + bullet.vx * ticks;
-      const y = bullet.y + bullet.vy * ticks;
-
-      if (Math.abs(x) > xLimit || Math.abs(y) > yLimit) {
-        return {
-          kind: "edge",
-          x: Math.max(-xLimit, Math.min(xLimit, x)),
-          y: Math.max(-yLimit, Math.min(yLimit, y)),
-        };
-      }
-
-      const nearbyAsteroids = getNearbyAsteroids(match.world, x, y, BULLET_DIAMETER, match.arena);
-      for (let i = 0; i < nearbyAsteroids.length; i++) {
-        const asteroid = nearbyAsteroids[i];
-        if (circlesOverlap(x, y, BULLET_DIAMETER, asteroid.x, asteroid.y, asteroid.size)) {
-          return { kind: "asteroid", x, y };
-        }
-      }
-
-      for (let i = 0; i < players.length; i++) {
-        const player = players[i];
-        // Same exemptions as the server: no self hits, and ships that are
-        // dead or still recovering from a hit let bullets through.
-        if (player.id === bullet.ownerId || player.health <= 0 || player.damageRecoveryTicks > 0) {
+  private applyBulletEvents(match: ActiveMatchState, events: WorldEvent[], tick: number) {
+    const effects = this.weaponEffects;
+    for (let i = 0; i < events.length; i++) {
+      const event = events[i];
+      if (event.type === "bullet-spawned") {
+        const bullet = event.bullet;
+        this.bullets.spawn(bullet, tick);
+        if (effects === null) {
           continue;
         }
-        const collider = getShipCollider(
-          player.x + player.vx * ticks,
-          player.y + player.vy * ticks,
-          player.angle,
-          player.shipVariant,
+
+        effects.trackBullet(bullet);
+        const isLocalBullet = bullet.ownerId === match.playerId;
+        if (isLocalBullet && performance.now() - this.lastLocalShotAt < LOCAL_SHOT_ECHO_MS) {
+          continue;
+        }
+
+        effects.addMuzzleFlash(
+          bullet.ownerId,
+          bullet.x,
+          bullet.y,
+          Math.atan2(bullet.vy, bullet.vx),
+          isLocalBullet ? FRIENDLY_SHOT_PALETTE : HOSTILE_SHOT_PALETTE,
         );
-        if (circleOverlapsShipCollider(x, y, BULLET_DIAMETER, collider)) {
-          return { kind: "ship", x, y };
+        if (this.isInView(bullet.x, bullet.y)) {
+          playSound("shoot");
+        }
+      } else if (event.type === "bullet-removed") {
+        const bullet = this.bullets.remove(event.bulletId, tick);
+        if (bullet === null || effects === null) {
+          continue;
+        }
+
+        effects.forgetBullet(bullet.id);
+        const impact = getBulletImpact(bullet, event.cause, match.arena);
+        const isLocalBullet = bullet.ownerId === match.playerId;
+        effects.addImpact(
+          impact.x,
+          impact.y,
+          Math.atan2(bullet.vy, bullet.vx),
+          isLocalBullet ? FRIENDLY_SHOT_PALETTE : HOSTILE_SHOT_PALETTE,
+          impact.kind,
+        );
+        if (impact.kind === "ship" && isLocalBullet) {
+          this.hitMarkerAt = performance.now();
+        }
+        if (impact.kind !== "fade" && this.isInView(impact.x, impact.y)) {
+          playSound("bulletHit");
         }
       }
     }
-
-    return { kind: "fade", x: bullet.x + bullet.vx, y: bullet.y + bullet.vy };
   }
 
   private playWorldEventEffects(match: ActiveMatchState, events: WorldEvent[]) {
@@ -2820,6 +2776,7 @@ class MultiplayerClientSession {
     this.inputSeqCounter = 0;
     this.selfSmoother.reset();
     this.timeline.reset();
+    this.bullets.reset();
     this.debugHistory = [];
     this.ammoHudEffects = [];
     this.cameraKick = { updatedAt: 0, x: 0, y: 0 };

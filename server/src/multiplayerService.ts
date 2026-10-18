@@ -9,6 +9,7 @@ import {
   addHeartToWorld,
   advanceRuntimeBulletState,
   BULLET_DIAMETER,
+  type BulletRemovalCause,
   circleOverlapsShipCollider,
   circlesOverlap,
   createEmptyInputState,
@@ -48,6 +49,7 @@ import {
   resolvePlayerCollision,
   type ShipCollider,
   shipCollidersOverlap,
+  snapshotBulletState,
   snapshotPlayerState,
   spawnAmmoFromRandom,
   spawnAsteroidFromRandom,
@@ -227,6 +229,7 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
     const payload: MatchWorldEventsPayload = {
       events,
       matchId: match.id,
+      sequence: match.sequence,
       worldVersion: match.worldVersion,
     };
     this.ctx.io.to(match.roomId).emit("match:world-events", payload);
@@ -309,10 +312,10 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
     // ships follow their players' inputs, each at its own pace: one
     // player's late or bunched packets must not move the other ship or
     // the bullets.
-    this.stepPlayers(match);
+    this.stepPlayers(match, worldEvents);
     this.handlePlayerShipCollision(match, playerDamageById);
     this.handlePlayerAsteroidCollisions(match, playerDamageById, worldEvents);
-    this.handleBulletCollisions(match, playerDamageById, asteroidDamageById);
+    this.handleBulletCollisions(match, playerDamageById, asteroidDamageById, worldEvents);
     this.applyAsteroidDamage(match, asteroidDamageById, worldEvents);
     this.applyHeartCollections(match, healingByPlayerId, worldEvents);
     this.applyAmmoCollections(match, worldEvents);
@@ -485,6 +488,7 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
     match: DuelMatch,
     playerDamageById: Map<string, number>,
     asteroidDamageById: Map<string, number>,
+    worldEvents: WorldEvent[],
   ) {
     // Ships neither move nor take damage during this pass, so every bullet
     // is tested against the same ships and colliders.
@@ -504,8 +508,11 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
     let keptFrom = bullets.length;
     for (let bulletIndex = bullets.length - 1; bulletIndex >= 0; bulletIndex--) {
       const bullet = bullets[bulletIndex];
-      if (!this.bulletIsConsumed(match, bullet, playerDamageById, asteroidDamageById)) {
+      const cause = this.bulletRemovalCause(match, bullet, playerDamageById, asteroidDamageById);
+      if (cause === null) {
         bullets[--keptFrom] = bullet;
+      } else {
+        worldEvents.push({ bulletId: bullet.id, cause, type: "bullet-removed" });
       }
     }
     bullets.copyWithin(0, keptFrom);
@@ -514,17 +521,18 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
 
   /**
    * Advance one bullet and test it against asteroids, then the ships in
-   * bulletTargetScratch. Returns true when it left the arena or hit something.
+   * bulletTargetScratch. Returns why the bullet ends on this tick, or null
+   * while it flies on.
    */
-  private bulletIsConsumed(
+  private bulletRemovalCause(
     match: DuelMatch,
     bullet: RuntimeBulletState,
     playerDamageById: Map<string, number>,
     asteroidDamageById: Map<string, number>,
-  ) {
+  ): BulletRemovalCause | null {
     advanceRuntimeBulletState(bullet);
     if (isRuntimeBulletOutOfBounds(bullet, MULTIPLAYER_ARENA)) {
-      return true;
+      return bullet.ttlTicks > 0 ? "edge" : "expired";
     }
 
     const nearbyAsteroids = getNearbyAsteroids(
@@ -541,7 +549,7 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
         circlesOverlap(bullet.x, bullet.y, BULLET_DIAMETER, asteroid.x, asteroid.y, asteroid.size)
       ) {
         asteroidDamageById.set(asteroid.id, (asteroidDamageById.get(asteroid.id) ?? 0) + 1);
-        return true;
+        return "asteroid";
       }
     }
 
@@ -559,11 +567,11 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
         )
       ) {
         playerDamageById.set(state.id, (playerDamageById.get(state.id) ?? 0) + 1);
-        return true;
+        return "ship";
       }
     }
 
-    return false;
+    return null;
   }
 
   private handlePlayerAsteroidCollisions(
@@ -693,16 +701,6 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
     }
 
     return {
-      bullets: match.bullets.map((bullet) => {
-        return {
-          id: bullet.id,
-          ownerId: bullet.ownerId,
-          vx: bullet.vx,
-          vy: bullet.vy,
-          x: bullet.x,
-          y: bullet.y,
-        };
-      }),
       countdownMs: this.countdownRemainingMs(match),
       debug,
       matchId: match.id,
@@ -790,7 +788,7 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
     });
   }
 
-  private stepPlayers(match: DuelMatch) {
+  private stepPlayers(match: DuelMatch, worldEvents: WorldEvent[]) {
     const steps = this.playerStepsForTick(match);
     for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
       const participant = steps[stepIndex].participant;
@@ -811,13 +809,13 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
         participant.state.fireCooldownTicks === 0 &&
         participant.state.ammo > 0
       ) {
-        match.bullets.push(
-          createRuntimeBulletState(
-            participant.state,
-            `bullet-${++match.counters.bullet}`,
-            resolveFireAngle(participant.state, participant.input),
-          ),
+        const bullet = createRuntimeBulletState(
+          participant.state,
+          `bullet-${++match.counters.bullet}`,
+          resolveFireAngle(participant.state, participant.input),
         );
+        match.bullets.push(bullet);
+        worldEvents.push({ bullet: snapshotBulletState(bullet), type: "bullet-spawned" });
         participant.state.ammo--;
         participant.state.fireCooldownTicks = FIRE_COOLDOWN_TICKS;
       }

@@ -22,6 +22,7 @@ import {
   type BattleRoyaleMatchFoundPayload,
   type BattleRoyaleSnapshotPayload,
   BULLET_DIAMETER,
+  type BulletRemovalCause,
   circleOverlapsShipCollider,
   circlesOverlap,
   createBattleRoyalePlayerState,
@@ -52,6 +53,7 @@ import {
   resolvePlayerCollision,
   type ShipCollider,
   shipCollidersOverlap,
+  snapshotBulletState,
   snapshotPlayerState,
   spawnBattleRoyaleAmmo,
   spawnBattleRoyaleAsteroid,
@@ -376,10 +378,10 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
 
     // One world step per server tick. Ships follow their own players'
     // inputs; one player's bunched packets never move anyone else.
-    this.stepPlayers(match);
+    this.stepPlayers(match, worldEvents);
     this.handlePlayerShipCollisions(match, playerDamageById);
     this.handlePlayerAsteroidCollisions(match, playerDamageById, worldEvents);
-    this.handleBulletCollisions(match, playerDamageById, asteroidDamageById);
+    this.handleBulletCollisions(match, playerDamageById, asteroidDamageById, worldEvents);
     this.applyAsteroidDamage(match, asteroidDamageById, worldEvents);
     this.applyHeartCollections(match, healingByPlayerId, worldEvents);
     this.applyAmmoCollections(match, worldEvents);
@@ -412,6 +414,7 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
     const payload: MatchWorldEventsPayload = {
       events,
       matchId: match.id,
+      sequence: match.sequence,
       worldVersion: match.worldVersion,
     };
     this.ctx.io.to(match.roomId).emit("br:world-events", payload);
@@ -442,14 +445,6 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
 
   private buildSnapshot(match: BrMatch): MatchSnapshotPayload {
     return {
-      bullets: match.bullets.map((bullet) => ({
-        id: bullet.id,
-        ownerId: bullet.ownerId,
-        vx: bullet.vx,
-        vy: bullet.vy,
-        x: bullet.x,
-        y: bullet.y,
-      })),
       countdownMs: this.countdownRemainingMs(match),
       matchId: match.id,
       phase: match.phase,
@@ -460,7 +455,7 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
     };
   }
 
-  private stepPlayers(match: BrMatch) {
+  private stepPlayers(match: BrMatch, worldEvents: WorldEvent[]) {
     for (const { input, participant } of this.playerStepsForTick(match)) {
       // A drift step carries sequence 0 and confirms nothing.
       participant.input = input;
@@ -473,13 +468,13 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
         participant.state.fireCooldownTicks === 0 &&
         participant.state.ammo > 0
       ) {
-        match.bullets.push(
-          createRuntimeBulletState(
-            participant.state,
-            `br-bullet-${++match.counters.bullet}`,
-            resolveFireAngle(participant.state, participant.input),
-          ),
+        const bullet = createRuntimeBulletState(
+          participant.state,
+          `br-bullet-${++match.counters.bullet}`,
+          resolveFireAngle(participant.state, participant.input),
         );
+        match.bullets.push(bullet);
+        worldEvents.push({ bullet: snapshotBulletState(bullet), type: "bullet-spawned" });
         participant.state.ammo--;
         participant.state.fireCooldownTicks = FIRE_COOLDOWN_TICKS;
         match.lastActivityAt = Date.now();
@@ -559,6 +554,7 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
     match: BrMatch,
     playerDamageById: Map<string, number>,
     asteroidDamageById: Map<string, number>,
+    worldEvents: WorldEvent[],
   ) {
     // Ships neither move nor take damage during this pass, so every bullet
     // is tested against the same ships and colliders.
@@ -578,8 +574,11 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
     let keptFrom = bullets.length;
     for (let bulletIndex = bullets.length - 1; bulletIndex >= 0; bulletIndex--) {
       const bullet = bullets[bulletIndex];
-      if (!this.bulletIsConsumed(match, bullet, playerDamageById, asteroidDamageById)) {
+      const cause = this.bulletRemovalCause(match, bullet, playerDamageById, asteroidDamageById);
+      if (cause === null) {
         bullets[--keptFrom] = bullet;
+      } else {
+        worldEvents.push({ bulletId: bullet.id, cause, type: "bullet-removed" });
       }
     }
     bullets.copyWithin(0, keptFrom);
@@ -588,17 +587,18 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
 
   /**
    * Advance one bullet and test it against asteroids, then the ships in
-   * bulletTargetScratch. Returns true when it left the arena or hit something.
+   * bulletTargetScratch. Returns why the bullet ends on this tick, or null
+   * while it flies on.
    */
-  private bulletIsConsumed(
+  private bulletRemovalCause(
     match: BrMatch,
     bullet: RuntimeBulletState,
     playerDamageById: Map<string, number>,
     asteroidDamageById: Map<string, number>,
-  ) {
+  ): BulletRemovalCause | null {
     advanceRuntimeBulletState(bullet);
     if (isRuntimeBulletOutOfBounds(bullet, BATTLE_ROYALE_ARENA)) {
-      return true;
+      return bullet.ttlTicks > 0 ? "edge" : "expired";
     }
 
     const nearbyAsteroids = getNearbyAsteroids(
@@ -615,7 +615,7 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
         circlesOverlap(bullet.x, bullet.y, BULLET_DIAMETER, asteroid.x, asteroid.y, asteroid.size)
       ) {
         asteroidDamageById.set(asteroid.id, (asteroidDamageById.get(asteroid.id) ?? 0) + 1);
-        return true;
+        return "asteroid";
       }
     }
 
@@ -633,11 +633,11 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
         )
       ) {
         playerDamageById.set(state.id, (playerDamageById.get(state.id) ?? 0) + 1);
-        return true;
+        return "ship";
       }
     }
 
-    return false;
+    return null;
   }
 
   private applyAsteroidDamage(
