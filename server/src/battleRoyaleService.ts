@@ -44,11 +44,13 @@ import {
   PLAYER_DAMAGE_RECOVERY_TICKS,
   PLAYER_MAX_AMMO,
   PLAYER_MAX_HEALTH,
+  type RuntimeBulletState,
   removeAmmoFromWorld,
   removeAsteroidFromWorld,
   removeHeartFromWorld,
   resolveFireAngle,
   resolvePlayerCollision,
+  type ShipCollider,
   shipCollidersOverlap,
   snapshotPlayerState,
   spawnBattleRoyaleAmmo,
@@ -108,6 +110,9 @@ export const LOBBY_LEASE_NAME = "lobby:battle-royale";
 const asteroidScratch: WorldAsteroidState[] = [];
 const heartScratch: WorldHeartState[] = [];
 const ammoScratch: WorldAmmoState[] = [];
+/** Ships a bullet can hit on this tick, with their colliders at the same index. */
+const bulletTargetScratch: BrParticipant[] = [];
+const bulletTargetColliderScratch: ShipCollider[] = [];
 
 const roomIdFor = (matchId: string) => `battle-royale:${matchId}`;
 
@@ -555,63 +560,84 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
     playerDamageById: Map<string, number>,
     asteroidDamageById: Map<string, number>,
   ) {
-    for (let bulletIndex = match.bullets.length - 1; bulletIndex >= 0; bulletIndex--) {
-      const bullet = match.bullets[bulletIndex];
-      advanceRuntimeBulletState(bullet);
-      if (isRuntimeBulletOutOfBounds(bullet, BATTLE_ROYALE_ARENA)) {
-        match.bullets.splice(bulletIndex, 1);
+    // Ships neither move nor take damage during this pass, so every bullet
+    // is tested against the same ships and colliders.
+    bulletTargetScratch.length = 0;
+    bulletTargetColliderScratch.length = 0;
+    for (const participant of match.players) {
+      if (participant.state.health <= 0 || participant.state.damageRecoveryTicks > 0) {
         continue;
       }
-      let consumedBullet = false;
-      const nearbyAsteroids = getNearbyAsteroids(
-        match.world,
-        bullet.x,
-        bullet.y,
-        BULLET_DIAMETER,
-        BATTLE_ROYALE_ARENA,
-        asteroidScratch,
-      );
-      for (const asteroid of nearbyAsteroids) {
-        if (
-          circlesOverlap(bullet.x, bullet.y, BULLET_DIAMETER, asteroid.x, asteroid.y, asteroid.size)
-        ) {
-          asteroidDamageById.set(asteroid.id, (asteroidDamageById.get(asteroid.id) ?? 0) + 1);
-          consumedBullet = true;
-          break;
-        }
-      }
-      if (consumedBullet) {
-        match.bullets.splice(bulletIndex, 1);
-        continue;
-      }
-      for (const participant of match.players) {
-        if (
-          participant.state.id === bullet.ownerId ||
-          participant.state.health <= 0 ||
-          participant.state.damageRecoveryTicks > 0
-        ) {
-          continue;
-        }
-        if (
-          circleOverlapsShipCollider(
-            bullet.x,
-            bullet.y,
-            BULLET_DIAMETER,
-            this.shipCollider(participant),
-          )
-        ) {
-          playerDamageById.set(
-            participant.state.id,
-            (playerDamageById.get(participant.state.id) ?? 0) + 1,
-          );
-          consumedBullet = true;
-          break;
-        }
-      }
-      if (consumedBullet) {
-        match.bullets.splice(bulletIndex, 1);
+      bulletTargetScratch.push(participant);
+      bulletTargetColliderScratch.push(this.shipCollider(participant));
+    }
+
+    // Bullets are visited last to first. Survivors are packed at the end
+    // of the array in their original order, then moved to the front.
+    const bullets = match.bullets;
+    let keptFrom = bullets.length;
+    for (let bulletIndex = bullets.length - 1; bulletIndex >= 0; bulletIndex--) {
+      const bullet = bullets[bulletIndex];
+      if (!this.bulletIsConsumed(match, bullet, playerDamageById, asteroidDamageById)) {
+        bullets[--keptFrom] = bullet;
       }
     }
+    bullets.copyWithin(0, keptFrom);
+    bullets.length -= keptFrom;
+  }
+
+  /**
+   * Advance one bullet and test it against asteroids, then the ships in
+   * bulletTargetScratch. Returns true when it left the arena or hit something.
+   */
+  private bulletIsConsumed(
+    match: BrMatch,
+    bullet: RuntimeBulletState,
+    playerDamageById: Map<string, number>,
+    asteroidDamageById: Map<string, number>,
+  ) {
+    advanceRuntimeBulletState(bullet);
+    if (isRuntimeBulletOutOfBounds(bullet, BATTLE_ROYALE_ARENA)) {
+      return true;
+    }
+
+    const nearbyAsteroids = getNearbyAsteroids(
+      match.world,
+      bullet.x,
+      bullet.y,
+      BULLET_DIAMETER,
+      BATTLE_ROYALE_ARENA,
+      asteroidScratch,
+    );
+    for (let asteroidIndex = 0; asteroidIndex < nearbyAsteroids.length; asteroidIndex++) {
+      const asteroid = nearbyAsteroids[asteroidIndex];
+      if (
+        circlesOverlap(bullet.x, bullet.y, BULLET_DIAMETER, asteroid.x, asteroid.y, asteroid.size)
+      ) {
+        asteroidDamageById.set(asteroid.id, (asteroidDamageById.get(asteroid.id) ?? 0) + 1);
+        return true;
+      }
+    }
+
+    for (let targetIndex = 0; targetIndex < bulletTargetScratch.length; targetIndex++) {
+      const { state } = bulletTargetScratch[targetIndex];
+      if (state.id === bullet.ownerId) {
+        continue;
+      }
+      if (
+        circleOverlapsShipCollider(
+          bullet.x,
+          bullet.y,
+          BULLET_DIAMETER,
+          bulletTargetColliderScratch[targetIndex],
+        )
+      ) {
+        playerDamageById.set(state.id, (playerDamageById.get(state.id) ?? 0) + 1);
+        return true;
+      }
+    }
+
+    return false;
   }
 
   private applyAsteroidDamage(
