@@ -219,37 +219,48 @@ const main = async () => {
   };
 
   // FNV-1a over the bits of everything the simulation moves. Player and
-  // bullet IDs are random per run, so they are left out.
-  const checksumScratch = new Float64Array(1);
-  const checksumWords = new Uint32Array(checksumScratch.buffer);
+  // bullet IDs are random per run, so they are left out. The hash is kept
+  // in a local int32 while it runs: a captured variable holding a number
+  // outside the small-integer range is boxed on every update, which would
+  // add the harness's own garbage to the GC numbers.
+  let checksumValues = new Float64Array(1024);
+  let checksumWords = new Uint32Array(checksumValues.buffer);
   let checksum = 0x811c9dc5;
-  const mix = (value: number) => {
-    checksumScratch[0] = value;
-    for (let word = 0; word < 2; word++) {
-      checksum ^= checksumWords[word];
-      checksum = Math.imul(checksum, 0x01000193) >>> 0;
-    }
-  };
   const mixState = () => {
-    for (const { state } of match.players) {
-      mix(state.x);
-      mix(state.y);
-      mix(state.vx);
-      mix(state.vy);
-      mix(state.angle);
-      mix(state.health);
+    const bullets = match.bullets as Array<{ x: number; y: number }>;
+    const needed =
+      match.players.length * 6 + bullets.length * 2 + match.world.asteroids.size * 2 + 3;
+    if (checksumValues.length < needed) {
+      checksumValues = new Float64Array(needed * 2);
+      checksumWords = new Uint32Array(checksumValues.buffer);
     }
-    mix(match.bullets.length);
-    for (const bullet of match.bullets as Array<{ x: number; y: number }>) {
-      mix(bullet.x);
-      mix(bullet.y);
+    const values = checksumValues;
+    let count = 0;
+    for (const { state } of match.players) {
+      values[count++] = state.x;
+      values[count++] = state.y;
+      values[count++] = state.vx;
+      values[count++] = state.vy;
+      values[count++] = state.angle;
+      values[count++] = state.health;
+    }
+    values[count++] = bullets.length;
+    for (let index = 0; index < bullets.length; index++) {
+      values[count++] = bullets[index].x;
+      values[count++] = bullets[index].y;
     }
     for (const asteroid of match.world.asteroids.values()) {
-      mix(asteroid.x);
-      mix(asteroid.hitPoints);
+      values[count++] = asteroid.x;
+      values[count++] = asteroid.hitPoints;
     }
-    mix(match.world.hearts.size);
-    mix(match.world.ammunitionPackets.size);
+    values[count++] = match.world.hearts.size;
+    values[count++] = match.world.ammunitionPackets.size;
+
+    let hash = checksum | 0;
+    for (let word = 0; word < count * 2; word++) {
+      hash = Math.imul(hash ^ checksumWords[word], 0x01000193);
+    }
+    checksum = hash >>> 0;
   };
 
   const runTick = (tick: number) => {
