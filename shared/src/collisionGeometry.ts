@@ -204,6 +204,32 @@ export const transformCollisionShape = (
   angle: number,
   width: number,
   height: number,
+): TransformedCollisionShape => {
+  const target: TransformedCollisionShape = {
+    aabb: {
+      maxX: Number.NEGATIVE_INFINITY,
+      maxY: Number.NEGATIVE_INFINITY,
+      minX: Number.POSITIVE_INFINITY,
+      minY: Number.POSITIVE_INFINITY,
+    },
+    loops: [],
+  };
+  return transformCollisionShapeInto(target, shape, centerX, centerY, angle, width, height);
+};
+
+/**
+ * Same result as transformCollisionShape, written into `target` so a
+ * caller that transforms the same shape every tick allocates nothing.
+ * Points are reused while the loop sizes match.
+ */
+export const transformCollisionShapeInto = (
+  target: TransformedCollisionShape,
+  shape: NormalizedCollisionShape,
+  centerX: number,
+  centerY: number,
+  angle: number,
+  width: number,
+  height: number,
 ) => {
   const cosine = Math.cos(angle);
   const sine = Math.sin(angle);
@@ -212,32 +238,43 @@ export const transformCollisionShape = (
   let maxX = Number.NEGATIVE_INFINITY;
   let maxY = Number.NEGATIVE_INFINITY;
 
-  const loops = shape.loops.map((loop) => {
-    return loop.map(([normalizedX, normalizedY]) => {
-      const localX = normalizedX * width;
-      const localY = normalizedY * height;
+  const loops = target.loops;
+  if (loops.length !== shape.loops.length) {
+    loops.length = 0;
+  }
+
+  for (let loopIndex = 0; loopIndex < shape.loops.length; loopIndex++) {
+    const source = shape.loops[loopIndex];
+    let loop = loops[loopIndex];
+    if (loop === undefined || loop.length !== source.length) {
+      loop = [];
+      for (let pointIndex = 0; pointIndex < source.length; pointIndex++) {
+        loop.push({ x: 0, y: 0 });
+      }
+      loops[loopIndex] = loop;
+    }
+
+    for (let pointIndex = 0; pointIndex < source.length; pointIndex++) {
+      const normalized = source[pointIndex];
+      const localX = normalized[0] * width;
+      const localY = normalized[1] * height;
       const worldX = centerX + localX * cosine - localY * sine;
       const worldY = centerY + localX * sine + localY * cosine;
       minX = Math.min(minX, worldX);
       minY = Math.min(minY, worldY);
       maxX = Math.max(maxX, worldX);
       maxY = Math.max(maxY, worldY);
-      return {
-        x: worldX,
-        y: worldY,
-      };
-    });
-  });
+      const point = loop[pointIndex];
+      point.x = worldX;
+      point.y = worldY;
+    }
+  }
 
-  return {
-    aabb: {
-      maxX,
-      maxY,
-      minX,
-      minY,
-    },
-    loops,
-  } satisfies TransformedCollisionShape;
+  target.aabb.maxX = maxX;
+  target.aabb.maxY = maxY;
+  target.aabb.minX = minX;
+  target.aabb.minY = minY;
+  return target;
 };
 
 export const circleOverlapsCollisionShape = (

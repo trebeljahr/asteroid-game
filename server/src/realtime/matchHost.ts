@@ -11,6 +11,7 @@ import {
   createEmptyInputState,
   createEmptyMatchWorld,
   FixedStepClock,
+  getShipCollider,
   type MatchMode,
   type MatchPhase,
   type MatchResumedPayload,
@@ -21,8 +22,10 @@ import {
   type RuntimePlayerState,
   type SeededRandomState,
   type ServerToClientEvents,
+  type ShipCollider,
   type ShipInputState,
   TICK_INTERVAL_MS,
+  updateShipCollider,
   type WorldEvent,
 } from "../../../shared/src";
 import type { SocketRoute } from "./bus";
@@ -59,6 +62,8 @@ export interface HostContext {
  * player is disconnected or after a handoff until they resume.
  */
 export interface HostParticipant {
+  /** Reused between ticks; read it through `shipCollider`. Never serialized. */
+  collider: ShipCollider | null;
   detachedAt: number | null;
   input: ShipInputState;
   inputPacing: InputPacing;
@@ -424,6 +429,26 @@ export abstract class MatchHostBase<P extends HostParticipant, M extends HostMat
     });
   }
 
+  /**
+   * The ship's collider at its current pose. Each participant keeps one
+   * collider, rebuilt in place only after the ship moved or turned, so
+   * collision checks against the same ship allocate nothing.
+   */
+  protected shipCollider(participant: P): ShipCollider {
+    const { state } = participant;
+    if (participant.collider === null) {
+      participant.collider = getShipCollider(state.x, state.y, state.angle, state.shipVariant);
+      return participant.collider;
+    }
+    return updateShipCollider(
+      participant.collider,
+      state.x,
+      state.y,
+      state.angle,
+      state.shipVariant,
+    );
+  }
+
   protected participantForSocket(matchId: string, socketId: string) {
     const seat = this.seats.get(socketId);
     if (seat === undefined || seat.matchId !== matchId) return null;
@@ -505,6 +530,7 @@ export abstract class MatchHostBase<P extends HostParticipant, M extends HostMat
 
   protected restoreParticipantBase(snapshot: ParticipantSnapshot, now: number): HostParticipant {
     return {
+      collider: null,
       detachedAt: now,
       input: createEmptyInputState(),
       inputPacing: createInputPacing(),

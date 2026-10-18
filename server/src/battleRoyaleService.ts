@@ -33,7 +33,6 @@ import {
   getNearbyAmmoPackets,
   getNearbyAsteroids,
   getNearbyHearts,
-  getShipCollider,
   getShipCollisionBoundingDiameter,
   INACTIVE_MATCH_TIMEOUT_MS,
   isRuntimeBulletOutOfBounds,
@@ -191,6 +190,7 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
     const players = entries.map((entry, index): BrParticipant => {
       const playerId = newPlayerId();
       return {
+        collider: null,
         detachedAt: null,
         eliminatedAt: null,
         eliminationPlacement: null,
@@ -487,12 +487,7 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
         const b = match.players[j];
         if (b.state.health <= 0) continue;
 
-        if (
-          !shipCollidersOverlap(
-            getShipCollider(a.state.x, a.state.y, a.state.angle, a.state.shipVariant),
-            getShipCollider(b.state.x, b.state.y, b.state.angle, b.state.shipVariant),
-          )
-        ) {
+        if (!shipCollidersOverlap(this.shipCollider(a), this.shipCollider(b))) {
           continue;
         }
 
@@ -518,12 +513,7 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
       if (participant.state.health <= 0 || participant.state.damageRecoveryTicks > 0) {
         continue;
       }
-      const shipCollider = getShipCollider(
-        participant.state.x,
-        participant.state.y,
-        participant.state.angle,
-        participant.state.shipVariant,
-      );
+      const shipCollider = this.shipCollider(participant);
       const nearbyAsteroids = getNearbyAsteroids(
         match.world,
         participant.state.x,
@@ -596,12 +586,7 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
             bullet.x,
             bullet.y,
             BULLET_DIAMETER,
-            getShipCollider(
-              participant.state.x,
-              participant.state.y,
-              participant.state.angle,
-              participant.state.shipVariant,
-            ),
+            this.shipCollider(participant),
           )
         ) {
           playerDamageById.set(
@@ -642,12 +627,7 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
     const collected = new Set<string>();
     for (const participant of match.players) {
       if (participant.state.health <= 0) continue;
-      const collider = getShipCollider(
-        participant.state.x,
-        participant.state.y,
-        participant.state.angle,
-        participant.state.shipVariant,
-      );
+      const collider = this.shipCollider(participant);
       const nearby = getNearbyHearts(
         match.world,
         participant.state.x,
@@ -680,12 +660,7 @@ export class BattleRoyaleService extends MatchHostBase<BrParticipant, BrMatch> {
     const collected = new Set<string>();
     for (const participant of match.players) {
       if (participant.state.health <= 0) continue;
-      const collider = getShipCollider(
-        participant.state.x,
-        participant.state.y,
-        participant.state.angle,
-        participant.state.shipVariant,
-      );
+      const collider = this.shipCollider(participant);
       const nearby = getNearbyAmmoPackets(
         match.world,
         participant.state.x,

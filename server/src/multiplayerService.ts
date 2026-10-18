@@ -20,7 +20,6 @@ import {
   getNearbyAmmoPackets,
   getNearbyAsteroids,
   getNearbyHearts,
-  getShipCollider,
   getShipCollisionBoundingDiameter,
   HEART_SPAWN_INTERVAL_MS,
   INACTIVE_MATCH_TIMEOUT_MS,
@@ -118,6 +117,7 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
     const players = tickets.slice(0, 2).map((ticket, index): DuelParticipant => {
       const playerId = newPlayerId();
       return {
+        collider: null,
         detachedAt: null,
         input: createEmptyInputState(),
         inputPacing: createInputPacing(),
@@ -360,12 +360,7 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
       if (participant.state.health <= 0) {
         continue;
       }
-      const shipCollider = getShipCollider(
-        participant.state.x,
-        participant.state.y,
-        participant.state.angle,
-        participant.state.shipVariant,
-      );
+      const shipCollider = this.shipCollider(participant);
 
       const nearbyHearts = getNearbyHearts(
         match.world,
@@ -412,12 +407,7 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
       if (participant.state.health <= 0) {
         continue;
       }
-      const shipCollider = getShipCollider(
-        participant.state.x,
-        participant.state.y,
-        participant.state.angle,
-        participant.state.shipVariant,
-      );
+      const shipCollider = this.shipCollider(participant);
 
       const nearbyAmmoPackets = getNearbyAmmoPackets(
         match.world,
@@ -529,12 +519,7 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
             bullet.x,
             bullet.y,
             BULLET_DIAMETER,
-            getShipCollider(
-              participant.state.x,
-              participant.state.y,
-              participant.state.angle,
-              participant.state.shipVariant,
-            ),
+            this.shipCollider(participant),
           )
         ) {
           playerDamageById.set(
@@ -564,12 +549,7 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
       if (participant.state.health <= 0 || participant.state.damageRecoveryTicks > 0) {
         continue;
       }
-      const shipCollider = getShipCollider(
-        participant.state.x,
-        participant.state.y,
-        participant.state.angle,
-        participant.state.shipVariant,
-      );
+      const shipCollider = this.shipCollider(participant);
 
       const nearbyAsteroids = getNearbyAsteroids(
         match.world,
@@ -614,22 +594,7 @@ export class MultiplayerService extends MatchHostBase<DuelParticipant, DuelMatch
       return;
     }
 
-    if (
-      !shipCollidersOverlap(
-        getShipCollider(
-          alphaPlayer.state.x,
-          alphaPlayer.state.y,
-          alphaPlayer.state.angle,
-          alphaPlayer.state.shipVariant,
-        ),
-        getShipCollider(
-          betaPlayer.state.x,
-          betaPlayer.state.y,
-          betaPlayer.state.angle,
-          betaPlayer.state.shipVariant,
-        ),
-      )
-    ) {
+    if (!shipCollidersOverlap(this.shipCollider(alphaPlayer), this.shipCollider(betaPlayer))) {
       return;
     }
 

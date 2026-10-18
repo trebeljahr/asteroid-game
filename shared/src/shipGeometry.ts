@@ -6,6 +6,7 @@ import {
   type Point2D,
   type TransformedCollisionShape,
   transformCollisionShape,
+  transformCollisionShapeInto,
 } from "./collisionGeometry";
 import { SHIP_COLLISION_SHAPES } from "./collisionShapeData";
 import type { ShipVariant } from "./multiplayerCore";
@@ -127,6 +128,45 @@ export const getShipCollider = (
     ),
     shipVariant,
   };
+};
+
+/**
+ * Move `collider` to a new pose in place and return it. A collider that
+ * already has this pose is returned untouched, so a caller can keep one
+ * collider per ship and call this before every use: the polygon is only
+ * rebuilt after the ship moved or turned.
+ */
+export const updateShipCollider = (
+  collider: ShipCollider,
+  x: number,
+  y: number,
+  angle: number,
+  shipVariant: ShipVariant,
+): ShipCollider => {
+  if (
+    collider.centerX === x &&
+    collider.centerY === y &&
+    collider.angle === angle &&
+    collider.shipVariant === shipVariant
+  ) {
+    return collider;
+  }
+
+  const spec = getShipColliderSpec(shipVariant);
+  transformCollisionShapeInto(
+    collider.shape,
+    SHIP_COLLISION_SHAPES[shipVariant],
+    x,
+    y,
+    angle,
+    spec.renderHeight,
+    spec.renderWidth,
+  );
+  collider.angle = angle;
+  collider.centerX = x;
+  collider.centerY = y;
+  collider.shipVariant = shipVariant;
+  return collider;
 };
 
 export const getShipColliderVertices = (collider: ShipCollider): Point2D[] => {
