@@ -168,8 +168,8 @@ jobs:
       # server app pulls `:live`, so this decides which build the deploy
       # below starts. It uses this job's own GITHUB_TOKEN (`packages:
       # write`); no Coolify credential is involved. A rollback is the same
-      # step with an older sha. The client is no image any more (see
-      # build-client); its old Coolify app keeps its last `:live` image.
+      # step with an older sha. The client is no image any more; the Worker
+      # serves it (see build-client).
       - name: Promote this commit's server image to :live
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -189,9 +189,8 @@ jobs:
       # build that does not exist yet; only this step does.
       #
       # Which apps: COOLIFY_RESOURCE_UUID for a single-app project, or
-      # COOLIFY_SERVER_RESOURCE_UUID for a split one. The COOLIFY_CLIENT_*
-      # secrets stay set and unused while the old client app is the
-      # rollback target; the Worker serves the client.
+      # COOLIFY_SERVER_RESOURCE_UUID for a split one. The client has no
+      # Coolify app; the Worker serves it.
       - name: Deploy via signed Coolify webhook
         env:
           COOLIFY_BASE_URL: ${{ secrets.COOLIFY_BASE_URL }}
@@ -203,10 +202,6 @@ jobs:
           COOLIFY_SERVER_DEPLOY_SECRET: ${{ secrets.COOLIFY_SERVER_DEPLOY_SECRET }}
           COOLIFY_SERVER_DEPLOY_REPOSITORY: ${{ secrets.COOLIFY_SERVER_DEPLOY_REPOSITORY }}
           COOLIFY_SERVER_DEPLOY_BRANCH: ${{ secrets.COOLIFY_SERVER_DEPLOY_BRANCH }}
-          COOLIFY_CLIENT_RESOURCE_UUID: ${{ secrets.COOLIFY_CLIENT_RESOURCE_UUID }}
-          COOLIFY_CLIENT_DEPLOY_SECRET: ${{ secrets.COOLIFY_CLIENT_DEPLOY_SECRET }}
-          COOLIFY_CLIENT_DEPLOY_REPOSITORY: ${{ secrets.COOLIFY_CLIENT_DEPLOY_REPOSITORY }}
-          COOLIFY_CLIENT_DEPLOY_BRANCH: ${{ secrets.COOLIFY_CLIENT_DEPLOY_BRANCH }}
         if: env.COOLIFY_BASE_URL != ''
         run: |
           set -euo pipefail
