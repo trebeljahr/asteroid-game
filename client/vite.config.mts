@@ -95,6 +95,13 @@ export default defineConfig({
       },
     }),
   ],
+  build: {
+    // Hashed bundles go here, apart from public/assets (fixed names). The
+    // Worker deploy carries this directory from release to release
+    // (scripts/carry-static.mjs), and a carried path must never change
+    // content, which a fixed-name image in public/assets can.
+    assetsDir: "_assets",
+  },
   server: {
     host: "127.0.0.1",
     port: 5173,

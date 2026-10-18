@@ -1,0 +1,14 @@
+# Cloudflare Workers static assets reads this file (it is never served).
+# Everything else keeps Cloudflare's default: public, max-age=0,
+# must-revalidate with an ETag. No long max-age on /_assets/*: such a rule
+# also applies to a 404, and the edge would cache that 404.
+
+/version.json
+  Cache-Control: no-store, must-revalidate
+
+/release-assets.json
+  Cache-Control: no-store, must-revalidate
+
+# The service worker checks this file for updates.
+/sw.js
+  Cache-Control: no-cache

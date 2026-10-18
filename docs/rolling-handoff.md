@@ -21,12 +21,12 @@ Optional: `REPLICA_ID` prefixes the per-process replica ID (the process
 ID and a random suffix are always added). `DRAIN_DELAY_MS` (default
 20000) is the time between `SIGTERM` and closing Socket.IO.
 
-The client container proxies `/socket.io` and `/trpc` to `BACKEND_URL`.
-In Docker Compose that is `http://server:9777`. When the client runs as
-its own image app, set `BACKEND_URL` to the server app's internal or
-routed URL. With `NODE_ENV=production` the client refuses to start
-without it. Alternatively, route `/socket.io` and `/trpc` straight to the
-server app in the proxy.
+In production a Cloudflare Worker serves the client, and `/socket.io/*`
+and `/trpc/*` go straight to the server app (Cloudflare routes with no
+Worker, then Traefik). In Docker Compose and `pnpm proof:stack` the
+client container (`client/server.mjs`) proxies both paths to
+`BACKEND_URL`, `http://server:9777` in Compose. With
+`NODE_ENV=production` it refuses to start without it.
 
 Clients connect with the WebSocket transport only, so no sticky
 sessions are needed. Image health checks run every 2 s (5 s timeout,

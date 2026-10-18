@@ -14,7 +14,8 @@
       "!**/.next",
       "!**/out",
       "!**/coverage",
-      "!**/*.css"
+      "!**/*.css",
+      "!scripts/carry-static.mjs"
     ]
   },
   "formatter": {

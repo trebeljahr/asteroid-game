@@ -59,43 +59,62 @@ jobs:
           TEST_DATABASE_URL: postgres://asteroid_ci:asteroid_ci@127.0.0.1:5432/asteroid_ci
         run: pnpm run test:runtime-security && pnpm run test:server
 
+  # The web client is a static Vite build served by the Cloudflare Worker
+  # asteroid-game-client on the route asteroids.trebeljahr.com/*. /trpc/*,
+  # /socket.io/* and /.well-known/acme-challenge/* have routes with no Worker
+  # and reach the server app on Coolify. This job uploads a Worker version
+  # and activates nothing; deploy-client switches to it once the server
+  # reports this commit.
   build-client:
     runs-on: ubuntu-latest
     needs: verify
+    outputs:
+      version_id: ${{ steps.upload.outputs.version_id }}
+    env:
+      SITE_URL: https://asteroids.trebeljahr.com
+      WRANGLER: wrangler@4.145.0
     steps:
       - name: Check out source
         uses: actions/checkout@v6
 
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
         with:
-          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
+          version: 10.33.2
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          node-version: 24
+          cache: pnpm
 
-      - name: Extract image metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/asteroid-game-client
-          tags: |
-            type=raw,value=main
-            type=sha,format=long
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter @simple-asteroid-game/client...
 
-      - name: Build and push client image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./client/Dockerfile
-          push: true
-          no-cache: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+      - name: Build the static client
+        run: |
+          set -euo pipefail
+          pnpm run build:client
+          printf '{"commit":"%s"}\n' "$GITHUB_SHA" > client/dist/version.json
+
+      # A Worker version serves only its own files. Carry the last two
+      # releases' hashed files so tabs opened before this deploy keep
+      # loading theirs.
+      - name: Carry earlier releases' hashed files
+        run: node scripts/carry-static.mjs --site "$SITE_URL" --out client/dist --dir _assets
+
+      - name: Upload a new Worker version (not live yet)
+        id: upload
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/wrangler-upload.ndjson
+        run: |
+          set -euo pipefail
+          pnpm dlx "$WRANGLER" versions upload --tag "$GITHUB_SHA" --message "$GITHUB_SHA"
+          id=$(node -e 'const rows=require("fs").readFileSync(process.argv[1],"utf8").trim().split("\n").map((l)=>JSON.parse(l));const row=rows.find((r)=>r.type==="version-upload");if(!row?.version_id)process.exit(1);console.log(row.version_id)' "$WRANGLER_OUTPUT_FILE_PATH")
+          echo "version_id=$id" >> "$GITHUB_OUTPUT"
+          echo "Uploaded Worker version $id (not live yet)"
 
   build-server:
     runs-on: ubuntu-latest
@@ -131,6 +150,8 @@ jobs:
           context: .
           file: ./server/Dockerfile
           push: true
+          build-args: |
+            COMMIT_SHA=${{ github.sha }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
@@ -140,22 +161,24 @@ jobs:
     # Keep unset while the old Compose app owns production. Enable only after
     # both image apps are live and deploy secrets point at their resource UUIDs.
     if: vars.ASTEROID_IMAGE_ROLLOUT_READY == 'true'
+    outputs:
+      server_deployed: ${{ steps.server-deployed.outputs.deployed }}
     steps:
-      # Point `:live` at the images this run built. Both Coolify Image apps
-      # pull `:live`, so this decides which build the deploy below starts.
-      # It uses this job's own GITHUB_TOKEN (`packages: write`); no Coolify
-      # credential is involved. A rollback is the same step with an older sha.
-      - name: Promote this commit's images to :live
+      # Point the server's `:live` at the image this run built. The Coolify
+      # server app pulls `:live`, so this decides which build the deploy
+      # below starts. It uses this job's own GITHUB_TOKEN (`packages:
+      # write`); no Coolify credential is involved. A rollback is the same
+      # step with an older sha. The client is no image any more (see
+      # build-client); its old Coolify app keeps its last `:live` image.
+      - name: Promote this commit's server image to :live
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          for half in server client; do
-            image="ghcr.io/${{ github.repository_owner }}/asteroid-game-$half"
-            docker buildx imagetools create --tag "$image:live" "$image:sha-${{ github.sha }}"
-            echo "promoted $image:sha-${{ github.sha }} to :live"
-          done
+          image="ghcr.io/${{ github.repository_owner }}/asteroid-game-server"
+          docker buildx imagetools create --tag "$image:live" "$image:sha-${{ github.sha }}"
+          echo "promoted $image:sha-${{ github.sha }} to :live"
 
       # Tell Coolify to deploy. There is no Coolify API token here: each
       # app has its own webhook secret (hatchkit mints it), and a `push`
@@ -166,8 +189,9 @@ jobs:
       # build that does not exist yet; only this step does.
       #
       # Which apps: COOLIFY_RESOURCE_UUID for a single-app project, or
-      # COOLIFY_SERVER_/COOLIFY_CLIENT_RESOURCE_UUID for a split one.
-      # hatchkit sets one set and clears the other.
+      # COOLIFY_SERVER_RESOURCE_UUID for a split one. The COOLIFY_CLIENT_*
+      # secrets stay set and unused while the old client app is the
+      # rollback target; the Worker serves the client.
       - name: Deploy via signed Coolify webhook
         env:
           COOLIFY_BASE_URL: ${{ secrets.COOLIFY_BASE_URL }}
@@ -220,8 +244,96 @@ jobs:
           }
           deploy app COOLIFY_
           deploy server COOLIFY_SERVER_
-          deploy client COOLIFY_CLIENT_
           if [ "$deployed" -eq 0 ]; then
             echo "::error::COOLIFY_BASE_URL is set but no COOLIFY_*RESOURCE_UUID is — nothing was deployed."
             exit 1
           fi
+
+      # deploy-client follows the same gate as the webhook step above. A
+      # step's `if:` reads only its own `env:`, so the gate's variable is
+      # set here again.
+      - name: Record that the server was deployed
+        id: server-deployed
+        env:
+          COOLIFY_BASE_URL: ${{ secrets.COOLIFY_BASE_URL }}
+        if: env.COOLIFY_BASE_URL != ''
+        run: echo "deployed=true" >> "$GITHUB_OUTPUT"
+
+  # Server first, then the client: deploy-client waits until the server
+  # reports this commit, switches the Worker in one step, and checks
+  # /version.json.
+  deploy-client:
+    runs-on: ubuntu-latest
+    needs: [build-client, deploy]
+    if: needs.deploy.outputs.server_deployed == 'true'
+    env:
+      SITE_URL: https://asteroids.trebeljahr.com
+      WRANGLER: wrangler@4.145.0
+    steps:
+      # A rolling deploy answers from the old and the new container for a
+      # while, so wait for three answers in a row.
+      - name: Wait for the server at this commit
+        run: |
+          set -uo pipefail
+          streak=0
+          for i in $(seq 1 60); do
+            got=$(curl -fsSL --max-time 10 "$SITE_URL/trpc/health?cb=$i$RANDOM" 2>/dev/null | jq -r '.result.data.version // empty' 2>/dev/null || true)
+            if [ "$got" = "$GITHUB_SHA" ]; then
+              streak=$((streak + 1))
+              if [ "$streak" -ge 3 ]; then echo "✓ server reports $GITHUB_SHA"; exit 0; fi
+            else
+              streak=0
+            fi
+            echo "  server: ${got:-<no version>} — waiting ($i/60)"
+            sleep 10
+          done
+          echo "::error::the server never reported $GITHUB_SHA on /trpc/health; the client was not switched."
+          exit 1
+
+      - name: Switch the client to this commit's Worker version
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          VERSION_ID: ${{ needs.build-client.outputs.version_id }}
+        run: npx --yes "$WRANGLER" versions deploy "$VERSION_ID@100%" --name asteroid-game-client --message "$GITHUB_SHA" --yes
+
+      - name: Verify the client is live
+        run: |
+          set -uo pipefail
+          for i in $(seq 1 24); do
+            commit=$(curl -fsSL --max-time 10 "$SITE_URL/version.json?cb=$i$RANDOM" 2>/dev/null | jq -r '.commit // empty' 2>/dev/null || true)
+            if [ "$commit" = "$GITHUB_SHA" ]; then echo "✓ $SITE_URL serves $GITHUB_SHA"; exit 0; fi
+            echo "  web: ${commit:-<no response>} — waiting ($i/24)"
+            sleep 5
+          done
+          echo "::error::$SITE_URL/version.json never reported $GITHUB_SHA"; exit 1
+
+  # Always runs, so a half-finished release says which half is live.
+  release-summary:
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [build-client, build-server, deploy, deploy-client]
+    steps:
+      - name: Which half is live
+        env:
+          SERVER: ${{ needs.deploy.result }}
+          SERVER_DEPLOYED: ${{ needs.deploy.outputs.server_deployed }}
+          CLIENT: ${{ needs.deploy-client.result }}
+          VERSION_ID: ${{ needs.build-client.outputs.version_id }}
+        run: |
+          say() { echo "$1"; echo "$1" >> "$GITHUB_STEP_SUMMARY"; }
+          if [ "$SERVER" = "skipped" ] || { [ "$SERVER" = "success" ] && [ "$SERVER_DEPLOYED" != "true" ]; }; then
+            say "Deploys are gated off or a build failed: nothing went live. Worker version ${VERSION_ID:-<none>} was uploaded, not activated."
+            exit 0
+          fi
+          if [ "$SERVER" != "success" ]; then
+            say "::error::Server deploy did not finish ($SERVER). The client was NOT switched: the previous Worker version still serves."
+            exit 1
+          fi
+          if [ "$CLIENT" = "success" ]; then
+            say "Server and client are both live at $GITHUB_SHA."
+            exit 0
+          fi
+          say "::error::Server $GITHUB_SHA is LIVE. The client is NOT ($CLIENT): the previous Worker version still serves."
+          say "To switch by hand: npx wrangler versions deploy ${VERSION_ID:-<id>}@100% --name asteroid-game-client --yes"
+          exit 1

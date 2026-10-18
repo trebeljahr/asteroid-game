@@ -30,17 +30,17 @@ Debug tools (collision outlines, netcode overlay) only exist in dev builds. Open
 
 ## Deployment
 
-The project ships with Docker support and a GitHub Actions workflow that builds images to GHCR.
+Production splits by path on one hostname:
+
+- The web client is a static Vite build (`client/dist`) served by the Cloudflare Worker `asteroid-game-client` on the route `asteroids.trebeljahr.com/*` (`wrangler.jsonc`, static assets only).
+- `/trpc/*`, `/socket.io/*` and `/.well-known/acme-challenge/*` have Cloudflare routes with no Worker. They reach Traefik on the Coolify server, which sends `/trpc` and `/socket.io` to the server's Docker Image app.
+
+`.github/workflows/build-and-deploy.yml` uploads a Worker version (not live), deploys the server, waits until `/trpc/health` reports the commit, then activates the Worker version. Each upload carries the last two releases' hashed files (`scripts/carry-static.mjs`), so tabs opened before a deploy keep loading theirs.
 
 ```bash
-# Local Docker
+# The whole stack in local Docker
 docker compose up
-
-# Production (pulls pre-built images from GHCR)
-docker compose -f docker-compose-prod.yaml up
 ```
-
-See `.github/workflows/build-and-deploy.yml` for the CI/CD pipeline. For Coolify, create a Docker Compose resource pointing at `docker-compose-prod.yaml` and set the `COOLIFY_WEBHOOK_URL` secret in GitHub.
 
 ## Project Structure
 
