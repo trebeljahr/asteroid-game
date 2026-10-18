@@ -27,6 +27,7 @@ import {
   MemoryCoordinationStore,
   PostgresCoordinationStore,
 } from "./realtime/store";
+import { wireParser } from "./realtime/wireParser";
 import { connectRedis } from "./redis";
 import { createAppRouter, createTRPCContext } from "./trpc/router";
 
@@ -38,6 +39,7 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
     origin: true,
     credentials: true,
   },
+  parser: wireParser,
 });
 
 let coordinator: RealtimeCoordinator | null = null;

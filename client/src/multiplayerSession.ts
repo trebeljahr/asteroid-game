@@ -84,6 +84,7 @@ import { replayPendingInputs } from "./netcode/reconcile";
 import { sampleBullets, sampleRemotePlayers } from "./netcode/remoteEntities";
 import { RenderSmoother } from "./netcode/renderSmoother";
 import { ServerTimeline } from "./netcode/serverTimeline";
+import { wireParser } from "./netcode/wireParser";
 import { ShipDebrisSystem } from "./shipDebris";
 import { assets } from "./sketch";
 import { recordMultiplayerResult } from "./stats";
@@ -510,6 +511,8 @@ class MultiplayerClientSession {
       },
       reconnectionDelay: RECONNECT_RETRY_MS,
       reconnectionDelayMax: 2000,
+      // Snapshots and world events arrive as msgpack.
+      parser: wireParser,
       // A frozen replica can accept TCP but never answer: give up quickly
       // so the next attempt can reach another replica.
       timeout: 3000,

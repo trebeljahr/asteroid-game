@@ -48,6 +48,12 @@ importers:
       socket.io-client:
         specifier: ^4.8.4
         version: 4.8.4
+      socket.io-msgpack-parser:
+        specifier: 3.0.2
+        version: 3.0.2
+      socket.io-parser:
+        specifier: 4.2.7
+        version: 4.2.7
       uuid:
         specifier: ^11.1.1
         version: 11.1.1
@@ -100,6 +106,12 @@ importers:
       socket.io:
         specifier: ^4.8.4
         version: 4.8.4
+      socket.io-msgpack-parser:
+        specifier: 3.0.2
+        version: 3.0.2
+      socket.io-parser:
+        specifier: 4.2.7
+        version: 4.2.7
       zod:
         specifier: ^4.6.5
         version: 4.6.5
@@ -1678,6 +1690,9 @@ packages:
     resolution: {integrity: sha512-gk/Z852D2Wtb//0I+kRFNKKE9dIIVirjoqPoA1wJU+XePVXZfGeBpk45+A1rKO4Q43prqWBNY/MiIeRLbPWUaA==}
     engines: {node: '>=4.0.0'}
 
+  component-emitter@1.3.1:
+    resolution: {integrity: sha512-T0+barUSQRTUQASh8bx02dl+DhF54GtIDY13Y3m9oWTklKbb3Wv974meRpeZ3lp1JpLVECWWNHC4vaG2XHXouQ==}
+
   concurrently@5.3.0:
     resolution: {integrity: sha512-8MhqOB6PWlBfA2vJ8a0bSFKATOdWlHiQlk11IfmQBPaHVP8oP2gsh2MObE6UR3hqDHqvaIvLTyceNW6obVuFHQ==}
     engines: {node: '>=6.0.0'}
@@ -2484,6 +2499,9 @@ packages:
     resolution: {integrity: sha512-6eZs5Ls3WtCisHWp9S2GUy8dqkpGi4BVSz3GaqiE6ezub0512ESztXUwUB6C6IKbQkY2Pnb/mD4WYojCRwcwLA==}
     engines: {node: '>=0.10.0'}
 
+  notepack.io@2.2.0:
+    resolution: {integrity: sha512-9b5w3t5VSH6ZPosoYnyDONnUTF8o0UkBw7JLA6eBlYJWyGT1Q3vQa8Hmuj1/X6RYvHjjygBDgw6fJhe0JEojfw==}
+
   notepack.io@3.0.1:
     resolution: {integrity: sha512-TKC/8zH5pXIAMVQio2TvVDTtPRX+DJPHDqjRbxogtFiByHyzKmy96RA0JtCQJ+WouyyL4A10xomQzgbUT+1jCg==}
 
@@ -2864,6 +2882,9 @@ packages:
   socket.io-client@4.8.4:
     resolution: {integrity: sha512-7wjKAvVXYOJsbmUgkWbnhPD4bFpkqrUR0++XOjpGFmqDqsqV1CI93VTraeExLxpjxEqrWgFoSRZu1ihjLWfkAA==}
     engines: {node: '>=10.0.0'}
+
+  socket.io-msgpack-parser@3.0.2:
+    resolution: {integrity: sha512-1e76bJ1PCKi9H+JiYk+S29PBJvknHjQWM7Mtj0hjF2KxDA6b6rQxv3rTsnwBoz/haZOhlCDIMQvPATbqYeuMxg==}
 
   socket.io-parser@4.2.7:
     resolution: {integrity: sha512-IH/iSeO9T6gz1KkFleGDWkG9N3dl4jXVYUtMhIqH10Md0ttMer8nUNWiP1DKuNrybD2xBrixLJdCC9J6ECoYkg==}
@@ -4716,6 +4737,8 @@ snapshots:
 
   common-tags@1.8.2: {}
 
+  component-emitter@1.3.1: {}
+
   concurrently@5.3.0:
     dependencies:
       chalk: 2.4.2
@@ -5582,6 +5605,8 @@ snapshots:
 
   normalize-path@3.0.0: {}
 
+  notepack.io@2.2.0: {}
+
   notepack.io@3.0.1: {}
 
   object-assign@4.1.1: {}
@@ -6017,6 +6042,11 @@ snapshots:
       - bufferutil
       - supports-color
       - utf-8-validate
+
+  socket.io-msgpack-parser@3.0.2:
+    dependencies:
+      component-emitter: 1.3.1
+      notepack.io: 2.2.0
 
   socket.io-parser@4.2.7:
     dependencies:

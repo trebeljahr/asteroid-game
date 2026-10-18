@@ -21,6 +21,8 @@
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "socket.io-client": "^4.8.4",
+    "socket.io-msgpack-parser": "3.0.2",
+    "socket.io-parser": "4.2.7",
     "uuid": "^11.1.1"
   },
   "devDependencies": {

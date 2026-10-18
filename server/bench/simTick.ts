@@ -1,4 +1,3 @@
-import { createRequire } from "node:module";
 import { performance } from "node:perf_hooks";
 import { parseArgs } from "node:util";
 import v8 from "node:v8";
@@ -19,6 +18,7 @@ import {
 import { BattleRoyaleService } from "../src/battleRoyaleService";
 import type { HostContext } from "../src/realtime/matchHost";
 import type { Ticket } from "../src/realtime/store";
+import { wireParser } from "../src/realtime/wireParser";
 
 /**
  * CPU benchmark of the battle-royale tick: one full match (20 ships, 48
@@ -36,9 +36,9 @@ import type { Ticket } from "../src/realtime/store";
  * seeded, so a run is repeatable: the state checksum at the end must not
  * change when the simulation code is only made faster.
  *
- * Emitted payloads are encoded with JSON inside the tick, as socket.io's
- * default parser does when it broadcasts to a room. Sending to sockets is
- * not simulated.
+ * Emitted payloads are encoded inside the tick with the server's
+ * socket.io parser (msgpack, src/realtime/wireParser.ts), once per room
+ * broadcast as socket.io does. Sending to sockets is not simulated.
  *
  * The script compiles with tsc and runs the CommonJS output, the same
  * code production runs. Under tsx every export becomes a getter, which
@@ -75,15 +75,27 @@ Math.random = () => {
 let virtualMs = 1_000_000;
 Date.now = () => Math.floor(virtualMs);
 
-// Socket.io's default parser encodes an event as `2["event",payload]` and
-// engine.io prefixes "4"; both are one ASCII byte.
+// The packet socket.io hands its parser for an event; nsp "/", type 2 (EVENT).
+const eventPacket = (event: string, payload: unknown) => ({
+  data: [event, payload],
+  nsp: "/",
+  type: 2,
+});
+// Socket.io's default JSON parser encodes an event as `2["event",payload]`
+// and engine.io prefixes "4"; both are one ASCII byte.
+const jsonWire = (event: string, payload: unknown) => `42${JSON.stringify([event, payload])}`;
+const encoder = new wireParser.Encoder();
+// The package's types say encode returns an ArrayBuffer; it returns [Buffer].
+const msgpackWire = (event: string, payload: unknown) => {
+  return (encoder.encode(eventPacket(event, payload)) as unknown as [Buffer])[0];
+};
 let encodeMs = 0;
-let jsonBytes = 0;
+let wireBytes = 0;
 let emits = 0;
 const snapshotSamples: BattleRoyaleSnapshotPayload[] = [];
 let snapshotCount = 0;
 // Bytes every player receives: each room broadcast reaches each of them once.
-const roomJsonBytes = { snapshots: 0, worldEvents: 0 };
+const roomBytes = { snapshots: 0, worldEvents: 0 };
 const worldEventSamples: MatchWorldEventsPayload[] = [];
 let worldEventCount = 0;
 const io = {
@@ -91,17 +103,17 @@ const io = {
   to: () => ({
     emit: (event: string, payload: unknown) => {
       const startedAt = performance.now();
-      const wire = `42${JSON.stringify([event, payload])}`;
+      const wire = msgpackWire(event, payload);
       encodeMs += performance.now() - startedAt;
-      jsonBytes += wire.length;
+      wireBytes += wire.length;
       emits++;
       if (event === "br:snapshot") {
-        roomJsonBytes.snapshots += wire.length;
+        roomBytes.snapshots += wire.length;
         if (snapshotCount++ % SNAPSHOT_SAMPLE_EVERY === 0) {
           snapshotSamples.push(payload as BattleRoyaleSnapshotPayload);
         }
       } else if (event === "br:world-events") {
-        roomJsonBytes.worldEvents += wire.length;
+        roomBytes.worldEvents += wire.length;
         if (worldEventCount++ % SNAPSHOT_SAMPLE_EVERY === 0) {
           worldEventSamples.push(payload as MatchWorldEventsPayload);
         }
@@ -292,11 +304,11 @@ const main = async () => {
 
   (globalThis as { gc?: () => void }).gc?.();
   encodeMs = 0;
-  jsonBytes = 0;
+  wireBytes = 0;
   emits = 0;
   snapshotSamples.length = 0;
-  roomJsonBytes.snapshots = 0;
-  roomJsonBytes.worldEvents = 0;
+  roomBytes.snapshots = 0;
+  roomBytes.worldEvents = 0;
   worldEventSamples.length = 0;
 
   const tickMs = new Float64Array(MEASURED_TICKS);
@@ -335,19 +347,16 @@ const main = async () => {
   }
   const allocatedBytes = gcFreedBytes + (heapAfter - heapBefore);
 
-  // Snapshot encodings. socket.io-msgpack-parser encodes the whole packet
-  // object with notepack.io; it is already installed for the Redis adapter.
-  const notepack = createRequire(require.resolve("@socket.io/redis-adapter"))("notepack.io") as {
-    encode: (value: unknown) => Buffer;
-  };
+  // Snapshot encodings: JSON (socket.io's default parser), msgpack (the
+  // server's parser) and JSON with permessage-deflate.
   const encodings = { deflate: 0, json: 0, msgpack: 0 };
   const encodeUs = { deflate: 0, json: 0, msgpack: 0 };
   for (const payload of snapshotSamples) {
     let startedAt = performance.now();
-    const json = `42${JSON.stringify(["br:snapshot", payload])}`;
+    const json = jsonWire("br:snapshot", payload);
     encodeUs.json += (performance.now() - startedAt) * 1000;
     startedAt = performance.now();
-    const msgpack = notepack.encode({ data: ["br:snapshot", payload], nsp: "/", type: 2 });
+    const msgpack = msgpackWire("br:snapshot", payload);
     encodeUs.msgpack += (performance.now() - startedAt) * 1000;
     startedAt = performance.now();
     const deflated = deflateRawSync(json);
@@ -358,21 +367,16 @@ const main = async () => {
   }
   const samples = snapshotSamples.length;
 
-  // World events go out on most ticks, so their msgpack size is scaled
-  // from a sample instead of encoding all of them.
+  // What JSON would have sent instead, scaled from the samples.
   const worldEventEncodings = { json: 0, msgpack: 0 };
   for (const payload of worldEventSamples) {
-    worldEventEncodings.json += `42${JSON.stringify(["br:world-events", payload])}`.length;
-    worldEventEncodings.msgpack += notepack.encode({
-      data: ["br:world-events", payload],
-      nsp: "/",
-      type: 2,
-    }).length;
+    worldEventEncodings.json += jsonWire("br:world-events", payload).length;
+    worldEventEncodings.msgpack += msgpackWire("br:world-events", payload).length;
   }
   const measuredSeconds = (MEASURED_TICKS * TICK_INTERVAL_MS) / 1000;
   const kbPerSecond = (bytes: number) => bytes / 1024 / measuredSeconds;
-  const snapshotsJsonKbPerSecond = kbPerSecond(roomJsonBytes.snapshots);
-  const worldEventsJsonKbPerSecond = kbPerSecond(roomJsonBytes.worldEvents);
+  const snapshotsKbPerSecond = kbPerSecond(roomBytes.snapshots);
+  const worldEventsKbPerSecond = kbPerSecond(roomBytes.worldEvents);
 
   const result = {
     allocatedKbPerTick: allocatedBytes / 1024 / MEASURED_TICKS,
@@ -384,21 +388,21 @@ const main = async () => {
       totalMs: gcMs,
       usPerTick: (gcMs * 1000) / MEASURED_TICKS,
     },
-    jsonKbPerSecond: (jsonBytes / 1024 / MEASURED_TICKS) * (1000 / TICK_INTERVAL_MS),
+    wireKbPerSecond: kbPerSecond(wireBytes),
     measuredTicks: MEASURED_TICKS,
     seed: SEED,
     perPlayerKbPerSecond: {
       json: {
-        snapshots: snapshotsJsonKbPerSecond,
-        worldEvents: worldEventsJsonKbPerSecond,
+        snapshots: snapshotsKbPerSecond * (encodings.json / encodings.msgpack),
+        worldEvents:
+          worldEventsKbPerSecond *
+          (worldEventEncodings.msgpack === 0
+            ? 1
+            : worldEventEncodings.json / worldEventEncodings.msgpack),
       },
       msgpack: {
-        snapshots: snapshotsJsonKbPerSecond * (encodings.msgpack / encodings.json),
-        worldEvents:
-          worldEventsJsonKbPerSecond *
-          (worldEventEncodings.json === 0
-            ? 1
-            : worldEventEncodings.msgpack / worldEventEncodings.json),
+        snapshots: snapshotsKbPerSecond,
+        worldEvents: worldEventsKbPerSecond,
       },
     },
     snapshot: {
@@ -444,7 +448,7 @@ const main = async () => {
       `tick             p50 ${us(result.tickUs.p50)}  p99 ${us(result.tickUs.p99)}  p99.9 ${us(result.tickUs.p999)}  max ${us(result.tickUs.max)}  mean ${us(result.tickUs.mean)}  (p50 = ${budgetShare.toFixed(1)}% of the ${TICK_INTERVAL_MS.toFixed(2)} ms tick)`,
     );
     console.log(
-      `  json encode    ${us(result.encodeUsPerTick)} per tick (${result.emitsPerTick.toFixed(2)} emits, ${result.jsonKbPerSecond.toFixed(1)} KiB/s per match before fan-out)`,
+      `  encode         ${us(result.encodeUsPerTick)} per tick (${result.emitsPerTick.toFixed(2)} emits, msgpack ${result.wireKbPerSecond.toFixed(1)} KiB/s per match before fan-out)`,
     );
     console.log(
       `gc               ${result.gc.totalMs.toFixed(1)} ms total, ${result.gc.usPerTick.toFixed(1)} µs per tick  ${JSON.stringify(result.gc.counts)}`,

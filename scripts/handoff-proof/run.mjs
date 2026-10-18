@@ -37,6 +37,11 @@ const serverRequire = createRequire(path.join(root, "server/package.json"));
 const clientRequire = createRequire(path.join(root, "client/package.json"));
 const { Pool } = serverRequire("pg");
 const { io: connect } = clientRequire("socket.io-client");
+// The game client's parser (client/src/netcode/wireParser.ts): JSON out, msgpack in.
+const wireParser = {
+  Decoder: clientRequire("socket.io-msgpack-parser").Decoder,
+  Encoder: clientRequire("socket.io-parser").Encoder,
+};
 
 const adminUrl = process.env.PROOF_DATABASE_URL;
 const redisUrl = process.env.PROOF_REDIS_URL;
@@ -201,6 +206,7 @@ class SimClient {
       // MULTIPLAYER_PROTOCOL_VERSION in shared/src/multiplayerCore.ts.
       auth: { deviceToken: this.deviceToken, protocol: 2 },
       autoConnect: false,
+      parser: wireParser,
       reconnectionDelay: 400,
       reconnectionDelayMax: 2000,
       timeout: 5000,
