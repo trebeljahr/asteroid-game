@@ -169,6 +169,13 @@ const PrivacyLink: React.FC = () => (
   </a>
 );
 
+// The imprint itself is client/public/imprint.html, served at /imprint.
+const ImprintLink: React.FC = () => (
+  <a href="/imprint" target="_blank" rel="noopener noreferrer">
+    Imprint
+  </a>
+);
+
 const PrivacySection: React.FC = () => (
   <div className="creditsSection">
     <p className="creditsLine">
@@ -398,6 +405,8 @@ const MainMenuPanel: React.FC<{ state: GameState }> = ({ state }) => {
           </ProjectDonateLink>
           {" · "}
           <PrivacyLink />
+          {" · "}
+          <ImprintLink />
         </p>
       </div>
     </section>
