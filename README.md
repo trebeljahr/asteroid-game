@@ -42,6 +42,19 @@ Production splits by path on one hostname:
 docker compose up
 ```
 
+### Error reporting
+
+Both halves report errors to the self-hosted GlitchTip project `asteroid-game` (Sentry protocol). Each is off while its DSN is empty.
+
+- **Server:** `SENTRY_DSN` in the Coolify env of the server app (`server/src/instrument.ts`). It sends uncaught exceptions, unhandled rejections and tRPC errors that answer 500. The process still exits on an uncaught error, as before.
+- **Client:** the repository variable `VITE_SENTRY_DSN`, inlined by the build-client job (`client/src/errorReporting`). A build without it ships no SDK. With it, the SDK loads as its own chunk after the game starts.
+
+```bash
+gh variable set VITE_SENTRY_DSN --body '<public DSN of the asteroid-game project>'
+```
+
+A report carries the error, its stack, the page URL without its query string, the release (`asteroid-game@<version>+<commit>`) and the platform. Never a user id, device token, email, cookie, header or request body; no breadcrumbs, no tracing, no session replay. The rules are `shared/src/errorScrub.ts` plus one scrubber per half, with tests in `client/test` and `server/test`. Set `SENTRY_ENVIRONMENT=wiring-check` (server) or build with `--mode wiring-check` (client) to send a test event apart from production.
+
 ## Project Structure
 
 ```

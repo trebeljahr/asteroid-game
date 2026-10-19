@@ -10,11 +10,13 @@
     "prebuild": "node scripts/generate-seo.mjs",
     "build": "vite build",
     "preview": "vite preview --host",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@sentry/browser": "10.75.3",
     "@trpc/client": "^11.19.0",
     "matter-js": "^0.14.2",
     "p5": "^1.11.13",

@@ -1,3 +1,6 @@
+// First: the SDK hooks the process before anything it reports on is loaded.
+// A side-effect import, so import sorting never moves it.
+import "./instrument";
 import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
@@ -16,6 +19,7 @@ import { achievementService } from "./achievementService";
 import { BattleRoyaleService } from "./battleRoyaleService";
 import { getPool } from "./db";
 import { runMigrations } from "./db/runMigrations";
+import { reportTrpcError } from "./instrument";
 import { getMultiplayerRuntimeConfig, MultiplayerService } from "./multiplayerService";
 import { ReplicaBus } from "./realtime/bus";
 import { DRAIN_DELAY_MS } from "./realtime/config";
@@ -87,6 +91,7 @@ app.use(
   trpcExpress.createExpressMiddleware({
     router: appRouter,
     createContext: createTRPCContext,
+    onError: reportTrpcError,
   }),
 );
 

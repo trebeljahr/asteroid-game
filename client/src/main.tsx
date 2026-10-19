@@ -4,7 +4,10 @@ import "./style.css";
 import "./sketch";
 import { App } from "./App";
 import { recordDonationSupport } from "./donation";
+import { startErrorReporting } from "./errorReporting/start";
 
+// Before p5 runs `setup` on load, so an error there is held and reported.
+void startErrorReporting();
 recordDonationSupport();
 
 const container = document.getElementById("menu");

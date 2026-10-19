@@ -1,10 +1,26 @@
+import { readFileSync } from "node:fs";
 import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 
 const apiPort = process.env.API_PORT || "9777";
 const apiTarget = `http://127.0.0.1:${apiPort}`;
 
+// Error reporting (src/errorReporting): off unless the build has a DSN. CI
+// passes the repository variable VITE_SENTRY_DSN. Defined as a literal even
+// when unset, so a build without it drops the SDK chunk entirely.
+const sentryDsn = process.env.VITE_SENTRY_DSN?.trim() ?? "";
+// `asteroid-game@<version>+<commit>`, the same release name the server sends.
+const { version } = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+) as { version: string };
+const commit = (process.env.GITHUB_SHA ?? "").slice(0, 12);
+const sentryRelease = commit ? `asteroid-game@${version}+${commit}` : `asteroid-game@${version}`;
+
 export default defineConfig({
+  define: {
+    "import.meta.env.VITE_SENTRY_DSN": JSON.stringify(sentryDsn),
+    "import.meta.env.VITE_SENTRY_RELEASE": JSON.stringify(sentryRelease),
+  },
   plugins: [
     VitePWA({
       registerType: "autoUpdate",
