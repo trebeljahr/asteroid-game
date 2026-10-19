@@ -90,7 +90,9 @@ export const createAppRouter = (
       }),
 
       setDisplayName: authedProcedure
-        .input(z.object({ displayName: z.string().min(1).max(32) }))
+        // Trim before the length check: a whitespace-only name must fail
+        // here as BAD_REQUEST, not later in updateDisplayName as a 500.
+        .input(z.object({ displayName: z.string().trim().min(1).max(32) }))
         .mutation(async ({ ctx, input }) => {
           const context = await getOrCreateUserByDeviceToken(ctx.deviceToken);
           await updateDisplayName(context.user.id, input.displayName);
