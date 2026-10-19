@@ -115,7 +115,10 @@ const CreditsSection: React.FC = () => (
   </div>
 );
 
-const ImpressumSection: React.FC = () => {
+const FoldoutSection: React.FC<{ label: string; children: React.ReactNode }> = ({
+  label,
+  children,
+}) => {
   const [open, setOpen] = useState(false);
   return (
     <div className="creditsSection">
@@ -132,26 +135,61 @@ const ImpressumSection: React.FC = () => {
           padding: 0,
         }}
       >
-        Imprint {open ? "▾" : "▸"}
+        {label} {open ? "▾" : "▸"}
       </button>
       {open && (
         <div style={{ marginTop: "0.5rem", fontSize: "0.75rem", lineHeight: 1.6, opacity: 0.7 }}>
-          <p>Information pursuant to § 5 DDG / § 18 (2) MStV (Germany)</p>
-          <p style={{ marginTop: "0.4rem" }}>
-            Rico Trebeljahr
-            <br />
-            c/o Block Services
-            <br />
-            Stuttgarter Str. 106
-            <br />
-            70736 Fellbach, Germany
-          </p>
-          <p style={{ marginTop: "0.4rem" }}>Email: imprint+asteroids@trebeljahr.com</p>
+          {children}
         </div>
       )}
     </div>
   );
 };
+
+const ImpressumSection: React.FC = () => (
+  <FoldoutSection label="Imprint">
+    <p>Information pursuant to § 5 DDG / § 18 (2) MStV (Germany)</p>
+    <p style={{ marginTop: "0.4rem" }}>
+      Rico Trebeljahr
+      <br />
+      c/o Block Services
+      <br />
+      Stuttgarter Str. 106
+      <br />
+      70736 Fellbach, Germany
+    </p>
+    <p style={{ marginTop: "0.4rem" }}>Email: imprint+asteroids@trebeljahr.com</p>
+  </FoldoutSection>
+);
+
+// Says what client/src/errorReporting/scrub.ts and server/src/errorScrub.ts
+// let through. Change the code and this text together.
+const PrivacySection: React.FC = () => (
+  <FoldoutSection label="Privacy">
+    <p>
+      <strong>Error reports.</strong> When the game hits an error in your browser, it sends an error
+      report to our error tracker. The game server reports its own errors the same way.
+    </p>
+    <p style={{ marginTop: "0.4rem" }}>
+      We run the error tracker ourselves at glitchtip.trebeljahr.com. Like all traffic to this game,
+      reports pass through Cloudflare.
+    </p>
+    <p style={{ marginTop: "0.4rem" }}>
+      A report contains the error message, the place in the code where it happened, the page address
+      without anything after &quot;?&quot; or &quot;#&quot;, the game version and the platform
+      (&quot;web&quot;).
+    </p>
+    <p style={{ marginTop: "0.4rem" }}>
+      A report never contains your device token, a user id, an email address, cookies or browser
+      headers. Before a report leaves your browser, the game removes email addresses, long ids and
+      tokens from the error message. The error tracker does not store your IP address.
+    </p>
+    <p style={{ marginTop: "0.4rem" }}>
+      We use the reports only to find and fix bugs. The error tracker deletes them after 90 days.
+      Questions: imprint+asteroids@trebeljahr.com
+    </p>
+  </FoldoutSection>
+);
 
 const useFullscreenState = (): {
   available: boolean;
@@ -212,6 +250,7 @@ const OptionsPanel: React.FC<{ state: GameState }> = ({ state }) => {
       </div>
 
       <CreditsSection />
+      <PrivacySection />
       <ImpressumSection />
     </section>
   );
