@@ -16,7 +16,7 @@
  *    holds the query's values, the device token included.
  */
 
-const EMAIL = /[^\s@<>"'(),;:]+@[^\s@<>"'(),;:]+\.[a-z]{2,}/gi;
+const EMAIL = /[^\s@<>"'(),;:/]+@[^\s@<>"'(),;:/]+\.[a-z]{2,}/gi;
 const BEARER = /\bBearer\s+[\w.~+/=-]+/gi;
 /**
  * A UUID, 32 hex digits, a base64url resume token: 32 or more id characters
