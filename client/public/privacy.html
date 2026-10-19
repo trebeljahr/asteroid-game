@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#060f1f" />
+    <meta
+      name="description"
+      content="Privacy policy of Asteroids: which personal data the game processes, why, for how long, and your rights under the GDPR."
+    />
+    <link rel="canonical" href="https://asteroids.trebeljahr.com/privacy" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <title>Privacy Policy | Asteroids</title>
+    <!--
+      What this page says is what the code does. Change them together:
+      error reports: shared/src/errorScrub.ts, client/src/errorReporting/,
+      server/src/instrument.ts; local storage: client/src/account.ts,
+      gameState.ts, stats.ts, donation.ts; account: server/src/db/schema.ts.
+    -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #010611;
+        color: #e0f2fe;
+        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+        line-height: 1.6;
+      }
+      main {
+        max-width: 42rem;
+        margin: 0 auto;
+        padding: 2rem 16px 4rem;
+      }
+      h1 {
+        margin: 0 0 0.25rem;
+        font-size: 2rem;
+      }
+      h2 {
+        margin: 2rem 0 0.5rem;
+        font-size: 1.25rem;
+      }
+      a {
+        color: #7dd3fc;
+      }
+      code {
+        font-size: 0.9em;
+        overflow-wrap: anywhere;
+      }
+      .updated {
+        margin-top: 0;
+        opacity: 0.7;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p><a href="/">Back to the game</a></p>
+      <h1>Privacy Policy</h1>
+      <p class="updated">Last updated: 19 October 2026</p>
+      <p>
+        This page explains which personal data the game Asteroids at
+        <code>asteroids.trebeljahr.com</code> processes, why, and for how long (Art. 13 GDPR,
+        § 25 TDDDG).
+      </p>
+
+      <h2>Who is responsible</h2>
+      <p>
+        Rico Trebeljahr, c/o Block Services, Stuttgarter Str. 106, 70736 Fellbach, Germany.<br />
+        Email: <a href="mailto:imprint+asteroids@trebeljahr.com">imprint+asteroids@trebeljahr.com</a>
+      </p>
+
+      <h2>In short</h2>
+      <ul>
+        <li>
+          The game has no sign-up. It creates an account for your device by itself, without an
+          email address, a password or your name.
+        </li>
+        <li>
+          The game sets no cookies. It keeps a random device token and your settings in your
+          browser's local storage.
+        </li>
+        <li>The game counts visits with Plausible, which stores nothing on your device.</li>
+        <li>
+          When the game breaks, it sends an error report without your device token, your IP
+          address or your browser's headers.
+        </li>
+        <li>I do not sell data and do not use it for advertising.</li>
+      </ul>
+
+      <h2>Delivery: Cloudflare</h2>
+      <p>
+        Your browser loads the game from Cloudflare, Inc., 101 Townsend St, San Francisco, CA
+        94107, USA. Cloudflare also forwards the game's connections to the game server. For each
+        request, Cloudflare receives your IP address, your browser's user agent and the referring
+        page. Cloudflare uses them to deliver the game and to protect it against attacks.
+        Cloudflare can also ask your browser to report failed connections to Cloudflare (Network
+        Error Logging).
+      </p>
+      <p>
+        Cloudflare is certified under the EU-U.S. Data Privacy Framework. Legal basis: Art. 6 (1)
+        (f) GDPR, my legitimate interest in delivering the game reliably and securely.
+      </p>
+
+      <h2>The game server: Hetzner</h2>
+      <p>
+        The game server, its database and its cache run on a server I rent from Hetzner Online
+        GmbH, Industriestr. 25, 91710 Gunzenhausen, Germany. The server stands in Hetzner's data
+        center in Nuremberg, Germany. Hetzner processes the data only on my behalf.
+      </p>
+      <p>
+        The game server sees your IP address while you are connected, but it does not store it.
+        Its log records connection ids and errors. An error in the log can include your device
+        token. The server keeps only the newest 30 MB of log and overwrites older entries.
+      </p>
+
+      <h2>Stored in your browser</h2>
+      <p>The game keeps these entries in your browser's local storage:</p>
+      <ul>
+        <li>
+          <strong>Device token:</strong> a random id that the game creates on the first start. It is
+          the key to your account (see below).
+        </li>
+        <li><strong>Settings:</strong> sound on or off, your chosen ship, developer switches.</li>
+        <li><strong>Statistics:</strong> your run statistics, so the menu can show them.</li>
+        <li>
+          <strong>Donation:</strong> the time you came back from the donation page, so the game can
+          thank you.
+        </li>
+      </ul>
+      <p>
+        These entries are necessary for the game you asked for, so storing them needs no consent
+        (§ 25 (2) no. 2 TDDDG). You can delete them when you clear this site's data in your
+        browser. The game then creates a new account and can no longer reach the old one.
+      </p>
+
+      <h2>Your account</h2>
+      <p>
+        The game creates an account on the game server when you start it for the first time. You
+        enter nothing. The account holds:
+      </p>
+      <ul>
+        <li>your device token and a random user id,</li>
+        <li>a generated display name, such as "Pilot 3F2A",</li>
+        <li>when the account was created and when you last played,</li>
+        <li>your statistics, such as runs, wins and destroyed asteroids,</li>
+        <li>your achievements and when you unlocked them,</li>
+        <li>the outcome of each multiplayer match you finish.</li>
+      </ul>
+      <p>
+        While you wait for a multiplayer match or play one, the server also keeps your connection
+        id, your ship choice and the state of the match. It deletes them when you leave the queue
+        or when the match ends. Other players see your ship and its moves during a match. They
+        never see your display name or your account.
+      </p>
+      <p>
+        Purpose: to keep your progress and achievements and to run multiplayer matches. Legal
+        basis: Art. 6 (1) (b) GDPR, providing the game that you use.
+      </p>
+      <p>
+        The game does not delete inactive accounts by itself yet. Write to me and I will delete
+        your account. Please include your device token: your browser shows it in this site's local
+        storage under <code>simple-asteroid-game-device-token</code>.
+      </p>
+      <p>
+        The database is backed up once a day. The backups are encrypted and stored with Cloudflare
+        R2 in the EU. I keep the three newest backups, so deleted data leaves the backups within
+        three days.
+      </p>
+
+      <h2>Error reports</h2>
+      <p>
+        When the game hits an error in your browser, it sends an error report to my error tracker.
+        The game server reports its own errors in the same way. I run the error tracker (GlitchTip)
+        myself at <code>glitchtip.trebeljahr.com</code>, on a Hetzner server in Nuremberg. Your
+        browser sends a report to the game server, which passes it on to the error tracker. The game
+        server does not store or log reports. Like all traffic to this game, reports pass through
+        Cloudflare.
+      </p>
+      <p>
+        A report contains the error message, the place in the code where the error happened, the
+        page address without anything after "?" or "#", the game version and the platform ("web").
+      </p>
+      <p>
+        A report never contains your device token, a user id, an email address, cookies or your
+        browser's headers. Before a report leaves your browser, the game removes email addresses,
+        long ids and tokens from the error message. The game server does not pass on your IP
+        address, so the error tracker never sees it.
+      </p>
+      <p>
+        Purpose: to find and fix bugs. Legal basis: Art. 6 (1) (f) GDPR, my legitimate interest in
+        a game that works. The error tracker deletes reports after 90 days.
+      </p>
+
+      <h2>Visitor statistics: Plausible</h2>
+      <p>
+        The game counts visits with Plausible Analytics. I run my own Plausible at
+        <code>plausible.trebeljahr.com</code>, on a Hetzner server in Nuremberg. Your browser loads
+        the Plausible script from there and sends its events there.
+      </p>
+      <p>
+        Plausible sets no cookies and stores nothing on your device. It uses your IP address and
+        user agent only for a moment. It combines them with a salt that changes every day into an
+        anonymous hash, so that it counts a returning visitor once per day. It stores neither the IP
+        address nor the user agent, and it discards the salt after 24 hours.
+      </p>
+      <p>
+        Plausible records the page address, the referring page, the browser, the operating system,
+        the device type, the country and clicks on links that leave the game, such as the donation
+        link. It derives the country from the IP address and then discards the address. These
+        records identify no one, and Plausible keeps them without a time limit.
+      </p>
+      <p>
+        Because Plausible stores nothing on your device and reads nothing from it, it needs no
+        consent under § 25 TDDDG. Legal basis: Art. 6 (1) (f) GDPR, my legitimate interest in
+        knowing how many people play. You can object at any time (see "Your rights"), or block
+        <code>plausible.trebeljahr.com</code> with a content blocker.
+      </p>
+
+      <h2>Donations</h2>
+      <p>
+        The "Donate" link opens <code>ricos.site</code> in a new tab. The link tells
+        <code>ricos.site</code> the address of the game page, so it can send you back. That site
+        has its own <a href="https://ricos.site/privacy">privacy policy</a>. When you come back
+        from it, the game stores the time in your browser to thank you. It sends nothing about this
+        to a server.
+      </p>
+
+      <h2>Your rights</h2>
+      <p>Under the GDPR you have the right to:</p>
+      <ul>
+        <li>get a copy of the personal data I hold about you (Art. 15 GDPR),</li>
+        <li>have it corrected or deleted (Art. 16 and 17 GDPR),</li>
+        <li>restrict its processing (Art. 18 GDPR),</li>
+        <li>receive it in a portable format (Art. 20 GDPR),</li>
+        <li>
+          object to processing that is based on my legitimate interest, such as visitor statistics
+          and error reports (Art. 21 GDPR),
+        </li>
+        <li>
+          complain to a data protection supervisory authority (Art. 77 GDPR), for example the
+          authority of the German state where you live.
+        </li>
+      </ul>
+      <p>
+        To use any of these rights, write to
+        <a href="mailto:imprint+asteroids@trebeljahr.com">imprint+asteroids@trebeljahr.com</a>.
+      </p>
+
+      <h2>Changes</h2>
+      <p>
+        I update this page when the game changes what it processes. The date at the top shows the
+        last change.
+      </p>
+      <p><a href="/">Back to the game</a></p>
+    </main>
+  </body>
+</html>

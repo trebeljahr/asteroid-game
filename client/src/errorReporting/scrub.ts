@@ -3,8 +3,8 @@ import { scrubText, stripUrl } from "../../../shared/src/errorScrub";
 
 /**
  * What a browser error report may carry, decided in one place. Every rule
- * removes something; nothing adds data. The privacy text (the Privacy
- * section under Options) says the same in plain words:
+ * removes something; nothing adds data. The privacy policy
+ * (client/public/privacy.html, "Error reports") says the same in plain words:
  *
  *  - The error and its stack frames, with the query string and fragment
  *    cut from every frame's file URL.

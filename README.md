@@ -54,7 +54,7 @@ Both halves report errors to the self-hosted GlitchTip project `asteroid-game` (
 gh variable set VITE_SENTRY_DSN --body '<public DSN of the asteroid-game project>'
 ```
 
-A report carries the error, its stack, the page URL without its query string, the release (`asteroid-game@<version>+<commit>`) and the platform. Never a user id, device token, email, cookie, header or request body; no breadcrumbs, no tracing, no session replay. The rules are `shared/src/errorScrub.ts` plus one scrubber per half, with tests in `client/test` and `server/test`. The Privacy section under Options (`client/src/App.tsx`) says the same to players: change the code and that text together. Set `SENTRY_ENVIRONMENT=wiring-check` (server) or build with `--mode wiring-check` (client) to send a test event apart from production.
+A report carries the error, its stack, the page URL without its query string, the release (`asteroid-game@<version>+<commit>`) and the platform. Never a user id, device token, email, cookie, header or request body; no breadcrumbs, no tracing, no session replay. The rules are `shared/src/errorScrub.ts` plus one scrubber per half, with tests in `client/test` and `server/test`. The privacy policy (`client/public/privacy.html`, served at `/privacy` and linked from the main menu and Options) says the same to players: change the code and that page together. Set `SENTRY_ENVIRONMENT=wiring-check` (server) or build with `--mode wiring-check` (client) to send a test event apart from production.
 
 ## Project Structure
 

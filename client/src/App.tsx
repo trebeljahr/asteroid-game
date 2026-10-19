@@ -162,35 +162,19 @@ const ImpressumSection: React.FC = () => (
   </FoldoutSection>
 );
 
-// Says what client/src/errorReporting/scrub.ts and server/src/errorScrub.ts
-// let through. Change the code and this text together.
+// The policy itself is client/public/privacy.html, served at /privacy.
+const PrivacyLink: React.FC = () => (
+  <a href="/privacy" target="_blank" rel="noopener noreferrer">
+    Privacy
+  </a>
+);
+
 const PrivacySection: React.FC = () => (
-  <FoldoutSection label="Privacy">
-    <p>
-      <strong>Error reports.</strong> When the game hits an error in your browser, it sends an error
-      report to our error tracker. The game server reports its own errors the same way.
+  <div className="creditsSection">
+    <p className="creditsLine">
+      <PrivacyLink />
     </p>
-    <p style={{ marginTop: "0.4rem" }}>
-      We run the error tracker ourselves at glitchtip.trebeljahr.com. Your browser sends a report to
-      the game server, which passes it on to the error tracker. The game server does not store or
-      log reports. Like all traffic to this game, reports pass through Cloudflare.
-    </p>
-    <p style={{ marginTop: "0.4rem" }}>
-      A report contains the error message, the place in the code where it happened, the page address
-      without anything after &quot;?&quot; or &quot;#&quot;, the game version and the platform
-      (&quot;web&quot;).
-    </p>
-    <p style={{ marginTop: "0.4rem" }}>
-      A report never contains your device token, a user id, an email address, cookies or browser
-      headers. Before a report leaves your browser, the game removes email addresses, long ids and
-      tokens from the error message. The game server does not pass on your IP address, so the error
-      tracker never sees it.
-    </p>
-    <p style={{ marginTop: "0.4rem" }}>
-      We use the reports only to find and fix bugs. The error tracker deletes them after 90 days.
-      Questions: imprint+asteroids@trebeljahr.com
-    </p>
-  </FoldoutSection>
+  </div>
 );
 
 const useFullscreenState = (): {
@@ -412,6 +396,8 @@ const MainMenuPanel: React.FC<{ state: GameState }> = ({ state }) => {
           <ProjectDonateLink href={DONATE_URL} target="_blank" rel="noopener noreferrer">
             Donate
           </ProjectDonateLink>
+          {" · "}
+          <PrivacyLink />
         </p>
       </div>
     </section>
