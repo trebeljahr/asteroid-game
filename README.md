@@ -48,6 +48,7 @@ Both halves report errors to the self-hosted GlitchTip project `asteroid-game` (
 
 - **Server:** `SENTRY_DSN` in the Coolify env of the server app (`server/src/instrument.ts`). It sends uncaught exceptions, unhandled rejections and tRPC errors that answer 500. The process still exits on an uncaught error, as before.
 - **Client:** the repository variable `VITE_SENTRY_DSN`, inlined by the build-client job (`client/src/errorReporting`). A build without it ships no SDK. With it, the SDK loads as its own chunk after the game starts.
+- **Tunnel:** the browser never posts to GlitchTip itself. Content blockers drop every request with `sentry_key=` in its URL, so the SDK's `tunnel` option posts each report to `/trpc/client-errors` on the game's own host, and the server passes it on (`server/src/errorTunnel.ts`). The path sits under `/trpc/` because the Cloudflare route, the Vite dev proxy and `client/server.mjs` already send that prefix to the server. The server forwards only to the host and project of its own `SENTRY_DSN`, refuses bodies over 128 KiB, sends none of the browser's headers or its IP address, and logs no report. A server without `SENTRY_DSN` has no tunnel, so client reports need both DSNs set.
 
 ```bash
 gh variable set VITE_SENTRY_DSN --body '<public DSN of the asteroid-game project>'

@@ -2,7 +2,8 @@
   // The web client, served by Cloudflare Workers static assets on the route
   // asteroids.trebeljahr.com/*. /trpc/*, /socket.io/* and
   // /.well-known/acme-challenge/* have routes with no Worker, so they reach
-  // the game server on Coolify. The routes are made in the Cloudflare
+  // the game server on Coolify (/trpc/* also carries the browser's error
+  // reports, /trpc/client-errors). The routes are made in the Cloudflare
   // dashboard or API, never here: with no "routes" key wrangler leaves them
   // alone.
   //

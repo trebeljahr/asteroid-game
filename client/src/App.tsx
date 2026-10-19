@@ -171,8 +171,9 @@ const PrivacySection: React.FC = () => (
       report to our error tracker. The game server reports its own errors the same way.
     </p>
     <p style={{ marginTop: "0.4rem" }}>
-      We run the error tracker ourselves at glitchtip.trebeljahr.com. Like all traffic to this game,
-      reports pass through Cloudflare.
+      We run the error tracker ourselves at glitchtip.trebeljahr.com. Your browser sends a report to
+      the game server, which passes it on to the error tracker. The game server does not store or
+      log reports. Like all traffic to this game, reports pass through Cloudflare.
     </p>
     <p style={{ marginTop: "0.4rem" }}>
       A report contains the error message, the place in the code where it happened, the page address
@@ -182,7 +183,8 @@ const PrivacySection: React.FC = () => (
     <p style={{ marginTop: "0.4rem" }}>
       A report never contains your device token, a user id, an email address, cookies or browser
       headers. Before a report leaves your browser, the game removes email addresses, long ids and
-      tokens from the error message. The error tracker does not store your IP address.
+      tokens from the error message. The game server does not pass on your IP address, so the error
+      tracker never sees it.
     </p>
     <p style={{ marginTop: "0.4rem" }}>
       We use the reports only to find and fix bugs. The error tracker deletes them after 90 days.

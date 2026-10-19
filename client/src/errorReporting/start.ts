@@ -1,3 +1,4 @@
+import { ERROR_TUNNEL_PATH } from "../../../shared/src/errorTunnel";
 import { createErrorReporter } from "./reporter";
 import type * as Sdk from "./sdk";
 
@@ -18,6 +19,7 @@ const loadSentry = (): Promise<typeof Sdk> =>
 /** Starts reporting if this build has a DSN. Call once, before the game starts. */
 export const startErrorReporting = createErrorReporter({
   dsn: import.meta.env.VITE_SENTRY_DSN,
+  tunnel: `${window.location.origin}${ERROR_TUNNEL_PATH}`,
   load: loadSentry,
   release: import.meta.env.VITE_SENTRY_RELEASE || undefined,
   environment: import.meta.env.MODE,

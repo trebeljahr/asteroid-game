@@ -19,6 +19,7 @@ import { achievementService } from "./achievementService";
 import { BattleRoyaleService } from "./battleRoyaleService";
 import { getPool } from "./db";
 import { runMigrations } from "./db/runMigrations";
+import { createErrorTunnel } from "./errorTunnel";
 import { reportTrpcError } from "./instrument";
 import { getMultiplayerRuntimeConfig, MultiplayerService } from "./multiplayerService";
 import { ReplicaBus } from "./realtime/bus";
@@ -85,6 +86,10 @@ app.use(
     credentials: true,
   }),
 );
+// The browser's error reports, on to GlitchTip. Ahead of express.json and
+// tRPC: its path is under /trpc/, and it reads the body itself.
+const errorTunnel = createErrorTunnel(process.env.SENTRY_DSN?.trim() ?? "");
+if (errorTunnel !== null) app.use(errorTunnel);
 app.use(express.json());
 app.use(
   "/trpc",

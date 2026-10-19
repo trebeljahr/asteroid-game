@@ -7,6 +7,10 @@ import type * as Sdk from "./sdk";
  * file is the reporter itself; `start.ts` builds the one the game uses from
  * the build's env.
  *
+ * Reports go through the game server (`tunnel`, server/src/errorTunnel.ts),
+ * never straight to GlitchTip: content blockers drop any request with
+ * `sentry_key=` in its URL, which the SDK's own endpoint has.
+ *
  * Without a DSN it never loads the SDK. With one, it loads the SDK as its
  * own chunk and holds the errors thrown while it loads, so a crash in p5's
  * first `setup` is still reported.
@@ -21,6 +25,8 @@ type Sentry = typeof Sdk;
 
 export interface ErrorReporterOptions {
   dsn: string;
+  /** Where the SDK posts its envelopes instead of the DSN's host: a path on the game's own host. */
+  tunnel: string;
   /** Imports the SDK. Never called when `dsn` is empty. */
   load: () => Promise<Sentry>;
   release: string | undefined;
@@ -61,6 +67,7 @@ export function createErrorReporter(options: ErrorReporterOptions): () => Promis
       .then((sdk) => {
         sdk.init({
           dsn: options.dsn,
+          tunnel: options.tunnel,
           release: options.release,
           environment: options.environment,
           sendDefaultPii: false,

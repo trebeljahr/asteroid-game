@@ -160,6 +160,7 @@ describe("createErrorReporter", () => {
     const target = new EventTarget();
     const start = createErrorReporter({
       dsn: "",
+      tunnel: "https://asteroids.example.com/trpc/client-errors",
       load: async () => {
         loads += 1;
         return fakeSdk().sdk;
@@ -177,6 +178,7 @@ describe("createErrorReporter", () => {
     let loads = 0;
     const start = createErrorReporter({
       dsn: "https://key@glitchtip.example.com/1",
+      tunnel: "https://asteroids.example.com/trpc/client-errors",
       load: async () => {
         loads += 1;
         return sdk;
@@ -189,6 +191,7 @@ describe("createErrorReporter", () => {
     assert.equal(loads, 1);
     assert.equal(inits.length, 1);
     const config = inits[0] ?? {};
+    assert.equal(config.tunnel, "https://asteroids.example.com/trpc/client-errors");
     assert.equal(config.sendDefaultPii, false);
     assert.equal(config.defaultIntegrations, false);
     assert.equal(config.maxBreadcrumbs, 0);
@@ -207,6 +210,7 @@ describe("createErrorReporter", () => {
     const target = new EventTarget();
     const start = createErrorReporter({
       dsn: "https://k@h/1",
+      tunnel: "https://asteroids.example.com/trpc/client-errors",
       load: () => new Promise((r) => (resolve = r)),
       release: undefined,
       environment: "production",
@@ -233,6 +237,7 @@ describe("createErrorReporter", () => {
   it("gives up quietly when the SDK chunk cannot load", async () => {
     const start = createErrorReporter({
       dsn: "https://k@h/1",
+      tunnel: "https://asteroids.example.com/trpc/client-errors",
       load: () => Promise.reject(new TypeError("Failed to fetch dynamically imported module")),
       release: undefined,
       environment: "production",
