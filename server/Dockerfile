@@ -1,4 +1,4 @@
-FROM mirror.gcr.io/library/node:24-bookworm-slim AS base
+FROM mirror.gcr.io/library/node:24.22.1-bookworm-slim AS base
 WORKDIR /app
 
 RUN npm install -g pnpm@10.33.2
@@ -26,7 +26,7 @@ WORKDIR /app
 
 RUN pnpm install --prod --frozen-lockfile --ignore-scripts --filter @simple-asteroid-game/server...
 
-FROM mirror.gcr.io/library/node:24-bookworm-slim AS runtime
+FROM mirror.gcr.io/library/node:24.22.1-bookworm-slim AS runtime
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
