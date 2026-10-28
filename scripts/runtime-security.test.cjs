@@ -4,6 +4,7 @@ const { createServer } = require("node:http");
 const { createRequire } = require("node:module");
 const path = require("node:path");
 const { test } = require("node:test");
+const { gzipSync } = require("node:zlib");
 
 const serverRequire = createRequire(path.join(__dirname, "../server/package.json"));
 const clientRequire = createRequire(path.join(__dirname, "../client/package.json"));
@@ -42,6 +43,40 @@ test("Express preserves JSON parsing and its default body limit", { timeout: 500
   assert.deepEqual(await valid.json(), { movement: { x: 1, y: 2 } });
   assert.equal((await post("{")).status, 400);
   assert.equal((await post(JSON.stringify({ data: "x".repeat(110 * 1024) }))).status, 413);
+});
+
+test("compressed JSON trailing bytes cannot crash the parser", { timeout: 5000 }, async (t) => {
+  const app = express();
+  app.use(express.json());
+  app.post("/echo", (req, res) => res.json(req.body));
+  app.use((err, _req, res, _next) => res.sendStatus(err.status || 500));
+  const server = createServer(app);
+  t.after(
+    () =>
+      new Promise((resolve) => {
+        server.closeAllConnections();
+        server.close(resolve);
+      }),
+  );
+  const url = await listen(server);
+  const valid = gzipSync('{"synthetic":true}');
+  for (const { body, status } of [
+    { body: valid, status: 200 },
+    { body: Buffer.from("invalid gzip"), status: 400 },
+    { body: Buffer.concat([valid, Buffer.of(0), Buffer.alloc(96 * 1024, 0x5a)]), status: 200 },
+    { body: valid, status: 200 },
+  ]) {
+    const response = await fetch(`${url}/echo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Encoding": "gzip" },
+      body,
+      signal: AbortSignal.timeout(3000),
+    });
+    assert.equal(response.status, status);
+    if (status === 200) assert.deepEqual(await response.json(), { synthetic: true });
+    // GHSA-27r3-jxmh-p828 raises its error after a successful response.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 });
 
 for (const transport of ["polling", "websocket"]) {
