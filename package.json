@@ -3,7 +3,11 @@
   "version": "1.0.0",
   "packageManager": "pnpm@10.33.2",
   "private": true,
-  "description": "This is a small asteroid game for multiplayer using typescript, sockets and p5 canvas.",
+  "description": "Fly through asteroid fields in your browser: race the clock alone, duel one player, or fight up to 19 others.",
+  "homepage": "https://asteroids.trebeljahr.com",
+  "bugs": {
+    "url": "https://github.com/trebeljahr/asteroid-game/issues"
+  },
   "scripts": {
     "setup": "node ./scripts/setup.mjs",
     "dev": "node scripts/dev.mjs",
@@ -28,18 +32,21 @@
     "backup:restore": "hatchkit backup restore --project asteroid-game",
     "test:server": "pnpm --filter @simple-asteroid-game/server test",
     "test:client": "pnpm --filter @simple-asteroid-game/client test",
+    "marketing:screenshots": "node scripts/marketing/capture-screenshots.mjs",
+    "marketing:social-preview": "node scripts/marketing/render-social-preview.mjs",
     "proof:handoff": "node scripts/handoff-proof/run.mjs",
     "proof:stack": "node scripts/handoff-proof/stack.mjs"
   },
   "repository": {
-    "type": "git"
+    "type": "git",
+    "url": "git+https://github.com/trebeljahr/asteroid-game.git"
   },
   "engines": {
     "node": ">=24",
     "npm": ">=10"
   },
   "author": "Rico Trebeljahr",
-  "license": "ISC",
+  "license": "AGPL-3.0-or-later",
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
     "concurrently": "^5.3.0",

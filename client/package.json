@@ -13,8 +13,8 @@
     "check": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts"
   },
-  "author": "",
-  "license": "ISC",
+  "author": "Rico Trebeljahr",
+  "license": "AGPL-3.0-or-later",
   "dependencies": {
     "@sentry/browser": "10.78.0",
     "@trpc/client": "^11.22.1",

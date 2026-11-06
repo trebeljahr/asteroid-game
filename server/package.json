@@ -20,7 +20,7 @@
     "bench:sim": "tsc -p tsconfig.bench.json && node --expose-gc dist/bench/server/bench/simTick.js"
   },
   "author": "Rico Trebeljahr",
-  "license": "ISC",
+  "license": "AGPL-3.0-or-later",
   "dependencies": {
     "@sentry/node": "10.78.0",
     "@socket.io/redis-adapter": "^8.3.0",
