@@ -47,7 +47,14 @@ export const createAppRouter = (
     // `version` is the commit this server was built from. CI waits for it
     // before it switches the client (served by a Cloudflare Worker).
     health: t.procedure.query(() => {
-      return { ok: true, version: process.env.COMMIT_SHA ?? null };
+      // `build` is the CI run that built the image. A base-image refresh
+      // rebuilds the same commit, so only `build` tells the new container
+      // from the old one (.github/workflows/base-refresh.yml).
+      return {
+        ok: true,
+        version: process.env.COMMIT_SHA ?? null,
+        build: process.env.BUILD_ID ?? null,
+      };
     }),
 
     user: t.router({

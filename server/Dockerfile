@@ -51,6 +51,9 @@ COPY --from=build /app/package*.json ./
 # layers above.
 ARG COMMIT_SHA=""
 ENV COMMIT_SHA=$COMMIT_SHA
+# The CI run that built this image; /trpc/health reports it as `build`.
+ARG BUILD_ID=""
+ENV BUILD_ID=$BUILD_ID
 
 USER node
 

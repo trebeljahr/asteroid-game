@@ -102,7 +102,11 @@ app.use(
 
 app.get("/health", (_request, response) => {
   if (draining) return response.status(503).json({ ok: false });
-  response.json({ ok: true, version: process.env.COMMIT_SHA ?? null });
+  response.json({
+    ok: true,
+    version: process.env.COMMIT_SHA ?? null,
+    build: process.env.BUILD_ID ?? null,
+  });
 });
 
 if (existsSync(clientDistPath)) {

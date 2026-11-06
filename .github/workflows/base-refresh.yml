@@ -1,0 +1,289 @@
+name: base-refresh
+
+# Rebuild the server commit that is live NOW on a freshly pulled base image,
+# so OS package fixes (curl, libc6, openssl …) reach production without a
+# code change. The backup host's image-rebuilds runner dispatches this when
+# its scanner reports fixes for the running server image (hatchkit
+# cli/src/templates/update-watch/image-rebuilds.py). It can also be run by
+# hand from the Actions tab.
+#
+# Ported from hatchkit cli/src/templates/base-refresh/base-refresh.yml for
+# this repo: one server image (the client is a Cloudflare Worker and has no
+# OS packages), health on /trpc/health, and the push pipeline's verify job
+# as the gate. The contract:
+#   · It rebuilds the LIVE commit, never main HEAD.
+#   · A new tag sha-<sha>-base-<run id>. `:sha-<sha>` and `:main` are never
+#     rewritten.
+#   · `pull` and no layer cache.
+#   · BUILD_ID=<run id> is baked in; /trpc/health reports it as `build`.
+#   · The tests pass before anything is pushed or promoted.
+#   · The digest `:live` held before is recorded first. Any failure after
+#     that restores it, redeploys, waits for the previous build, and fails
+#     the run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      rehearse_restore:
+        description: Fail on purpose after the deploy, to prove the restore path
+        type: boolean
+        default: false
+
+# The push pipeline's group: a refresh waits for a running deploy, and a
+# push waits for a running refresh. Neither cancels the other.
+concurrency:
+  group: asteroid-game-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  SITE_URL: https://asteroids.trebeljahr.com
+  IMAGE: ghcr.io/${{ github.repository_owner }}/asteroid-game-server
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.live.outputs.sha }}
+    steps:
+      - name: Read the commit that is live now
+        id: live
+        run: |
+          set -euo pipefail
+          server=$(curl -fsSL --max-time 10 "$SITE_URL/trpc/health?cb=$RANDOM" | jq -r '.result.data.version // empty')
+          client=$(curl -fsSL --max-time 10 "$SITE_URL/version.json?cb=$RANDOM" | jq -r '.commit // empty')
+          if ! printf '%s' "$server" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::could not read the live server commit (got '${server:-<none>}')"
+            exit 1
+          fi
+          if [ "$server" != "$client" ]; then
+            echo "::error::the server serves $server and the client serves ${client:-<none>}: a release is half done, so nothing is rebuilt"
+            exit 1
+          fi
+          echo "sha=$server" >> "$GITHUB_OUTPUT"
+          echo "live commit: $server"
+
+  # The push pipeline's verify job, at the live commit.
+  test:
+    needs: [live]
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16-alpine
+        env:
+          POSTGRES_USER: asteroid_ci
+          POSTGRES_PASSWORD: asteroid_ci
+          POSTGRES_DB: asteroid_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U asteroid_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - name: Check out the live commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.live.outputs.sha }}
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run check
+
+      - name: Lint
+        run: pnpm exec biome check --diagnostic-level=error .
+
+      - name: Runtime and match handoff tests
+        env:
+          TEST_DATABASE_URL: postgres://asteroid_ci:asteroid_ci@127.0.0.1:5432/asteroid_ci
+        run: pnpm run test:runtime-security && pnpm run test:server
+
+      - name: Client tests
+        run: pnpm run test:client
+
+  build:
+    needs: [live, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out the live commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.live.outputs.sha }}
+          persist-credentials: false
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The point of this workflow: today's base image, no cached layers.
+      - name: Build and push the refreshed server image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./server/Dockerfile
+          push: true
+          pull: true
+          no-cache: true
+          build-args: |
+            COMMIT_SHA=${{ needs.live.outputs.sha }}
+            BUILD_ID=${{ github.run_id }}
+          tags: ${{ env.IMAGE }}:sha-${{ needs.live.outputs.sha }}-base-${{ github.run_id }}
+
+  deploy:
+    needs: [live, build]
+    runs-on: ubuntu-latest
+    if: vars.ASTEROID_IMAGE_ROLLOUT_READY == 'true'
+    permissions:
+      contents: read
+      packages: write
+    env:
+      SHA: ${{ needs.live.outputs.sha }}
+      TAG: sha-${{ needs.live.outputs.sha }}-base-${{ github.run_id }}
+      BUILD_ID: ${{ github.run_id }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      COOLIFY_BASE_URL: ${{ secrets.COOLIFY_BASE_URL }}
+      COOLIFY_RESOURCE_UUID: ${{ secrets.COOLIFY_RESOURCE_UUID }}
+      COOLIFY_DEPLOY_SECRET: ${{ secrets.COOLIFY_DEPLOY_SECRET }}
+      COOLIFY_DEPLOY_REPOSITORY: ${{ secrets.COOLIFY_DEPLOY_REPOSITORY }}
+      COOLIFY_DEPLOY_BRANCH: ${{ secrets.COOLIFY_DEPLOY_BRANCH }}
+      COOLIFY_SERVER_RESOURCE_UUID: ${{ secrets.COOLIFY_SERVER_RESOURCE_UUID }}
+      COOLIFY_SERVER_DEPLOY_SECRET: ${{ secrets.COOLIFY_SERVER_DEPLOY_SECRET }}
+      COOLIFY_SERVER_DEPLOY_REPOSITORY: ${{ secrets.COOLIFY_SERVER_DEPLOY_REPOSITORY }}
+      COOLIFY_SERVER_DEPLOY_BRANCH: ${{ secrets.COOLIFY_SERVER_DEPLOY_BRANCH }}
+    steps:
+      # One copy of the deploy and the poll, for the rollout and the restore.
+      - name: Write the deploy helpers
+        run: |
+          cat > "$RUNNER_TEMP/helpers.sh" <<'SH'
+          set -euo pipefail
+          deploy_one() { # label, secret-name prefix
+            local uuid_var="${2}RESOURCE_UUID" secret_var="${2}DEPLOY_SECRET"
+            local repo_var="${2}DEPLOY_REPOSITORY" branch_var="${2}DEPLOY_BRANCH"
+            local uuid="${!uuid_var:-}" secret="${!secret_var:-}" repo="${!repo_var:-}" branch="${!branch_var:-}"
+            [ -n "$uuid" ] || return 0
+            if [ -z "$secret" ] || [ -z "$repo" ] || [ -z "$branch" ]; then
+              echo "::error::${2}DEPLOY_SECRET/_REPOSITORY/_BRANCH are not set"; return 1
+            fi
+            local body sig answer
+            body=$(jq -cn --arg ref "refs/heads/$branch" --arg sha "$SHA" --arg repo "$repo" \
+              '{ref: $ref, after: $sha, repository: {full_name: $repo}, commits: [{id: $sha, added: [], removed: [], modified: [".hatchkit/deploy-webhook"]}]}')
+            sig=$(printf '%s' "$body" | HOOK_SECRET="$secret" node -e \
+              'process.stdout.write(require("node:crypto").createHmac("sha256", process.env.HOOK_SECRET).update(require("node:fs").readFileSync(0)).digest("hex"))')
+            answer=$(curl -fsS -X POST "$COOLIFY_BASE_URL/webhooks/source/github/events/manual" \
+              -H 'Content-Type: application/json' -H 'X-GitHub-Event: push' \
+              -H "X-Hub-Signature-256: sha256=$sig" --data-binary "$body")
+            if printf '%s' "$answer" | jq -e --arg uuid "$uuid" \
+                'type == "array" and any(.[]; .application_uuid == $uuid and .status == "success")' >/dev/null 2>&1; then
+              echo "deploy queued for the $1 app ($uuid)"
+              DEPLOYED=$((DEPLOYED + 1))
+            else
+              echo "::error::Coolify did not queue a deploy of the $1 app"
+              return 1
+            fi
+          }
+          deploy_all() {
+            [ -n "$COOLIFY_BASE_URL" ] || { echo "::error::COOLIFY_BASE_URL is not set"; return 1; }
+            DEPLOYED=0
+            deploy_one app COOLIFY_
+            deploy_one server COOLIFY_SERVER_
+            [ "$DEPLOYED" -gt 0 ] || { echo "::error::no COOLIFY_*RESOURCE_UUID is set: nothing was deployed"; return 1; }
+          }
+          # A rolling deploy answers from the old and the new container for a
+          # while, so wait for three matching answers in a row. "new" wants
+          # this run's build; "old" wants any other build of the same commit.
+          wait_for_server() {
+            local streak=0 got version build
+            for i in $(seq 1 60); do
+              got=$(curl -fsSL --max-time 10 "$SITE_URL/trpc/health?cb=$i$RANDOM" 2>/dev/null || true)
+              version=$(printf '%s' "$got" | jq -r '.result.data.version // empty' 2>/dev/null || true)
+              build=$(printf '%s' "$got" | jq -r '.result.data.build // empty' 2>/dev/null || true)
+              if [ "$version" = "$SHA" ] && { { [ "$1" = new ] && [ "$build" = "$BUILD_ID" ]; } || { [ "$1" = old ] && [ "$build" != "$BUILD_ID" ]; }; }; then
+                streak=$((streak + 1))
+                if [ "$streak" -ge 3 ]; then echo "✓ server serves $SHA build ${build:-unmarked}"; return 0; fi
+              else
+                streak=0
+              fi
+              echo "  server: ${version:-<none>} build ${build:-<none>} — waiting ($i/60)"
+              sleep 10
+            done
+            echo "::error::the server never served the expected build ($1)"
+            return 1
+          }
+          SH
+
+      - name: Record the image :live points at now
+        id: previous
+        run: |
+          source "$RUNNER_TEMP/helpers.sh"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          digest=$(docker buildx imagetools inspect "$IMAGE:live" --format '{{json .Manifest}}' | jq -r '.digest // empty')
+          if ! printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "::error::could not read $IMAGE:live: no rollback target, so nothing is promoted"
+            exit 1
+          fi
+          echo "$digest" > "$RUNNER_TEMP/previous"
+          echo "$IMAGE:live is $digest"
+
+      - name: Promote the refreshed image to :live
+        run: |
+          source "$RUNNER_TEMP/helpers.sh"
+          docker buildx imagetools create --tag "$IMAGE:live" "$IMAGE:$TAG"
+          echo "promoted $IMAGE:$TAG to :live"
+
+      - name: Deploy via signed Coolify webhook
+        run: |
+          source "$RUNNER_TEMP/helpers.sh"
+          deploy_all
+
+      - name: Verify the refreshed image serves
+        run: |
+          source "$RUNNER_TEMP/helpers.sh"
+          wait_for_server new
+
+      - name: Rehearse a failure
+        if: inputs.rehearse_restore
+        run: |
+          echo "::warning::rehearse_restore is set: failing on purpose so the restore below runs"
+          exit 1
+
+      # Any failure after the previous digest was recorded. Idempotent:
+      # re-pointing :live at the digest it already holds changes nothing.
+      - name: Restore the previous image
+        if: failure() && steps.previous.outcome == 'success'
+        run: |
+          source "$RUNNER_TEMP/helpers.sh"
+          digest=$(cat "$RUNNER_TEMP/previous")
+          docker buildx imagetools create --tag "$IMAGE:live" "$IMAGE@$digest"
+          echo "restored $IMAGE:live to $digest"
+          deploy_all
+          wait_for_server old
+          echo "::error::the refresh did not pass; the previous image is live again. This run fails on purpose."
+          exit 1
