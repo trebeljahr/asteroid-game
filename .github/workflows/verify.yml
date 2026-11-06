@@ -1,0 +1,63 @@
+name: verify
+
+# The checks every change to main must pass: typecheck, lint, the runtime and
+# match handoff tests against Postgres, and the client tests. One copy, called
+# by build-and-deploy.yml on every push and by pr-checks.yml on every pull
+# request, so a Dependabot PR is held to the same gate as a push.
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16-alpine
+        env:
+          POSTGRES_USER: asteroid_ci
+          POSTGRES_PASSWORD: asteroid_ci
+          POSTGRES_DB: asteroid_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U asteroid_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run check
+
+      - name: Lint
+        run: pnpm exec biome check --diagnostic-level=error .
+
+      - name: Runtime and match handoff tests
+        env:
+          TEST_DATABASE_URL: postgres://asteroid_ci:asteroid_ci@127.0.0.1:5432/asteroid_ci
+        run: pnpm run test:runtime-security && pnpm run test:server
+
+      - name: Client tests
+        run: pnpm run test:client

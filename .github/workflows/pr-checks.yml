@@ -1,0 +1,21 @@
+name: pr-checks
+
+# Runs verify.yml on every pull request to main. The ruleset on main requires
+# it before GitHub merges a pull request, which is what lets
+# dependabot-auto-merge.yml hand the merge to GitHub's auto-merge. It runs the
+# PR's code with a read-only token and no secrets.
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    uses: ./.github/workflows/verify.yml

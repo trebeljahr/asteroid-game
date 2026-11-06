@@ -1,0 +1,76 @@
+name: dependabot-auto-merge
+
+# Hands Dependabot's minor and patch PRs (see .github/dependabot.yml) to
+# GitHub's auto-merge. GitHub squash-merges such a PR once the ruleset on
+# main is satisfied, which requires pr-checks.yml's verify to pass on the
+# PR's head; a PR whose checks fail stays open for a person.
+#
+# Never merged automatically: a major update, a PR by anyone but
+# Dependabot, or a PR someone else has pushed to (that push turns auto-merge
+# off again).
+#
+# deploy-main: a merge GitHub makes for auto-merge enabled with GITHUB_TOKEN
+# may not trigger the push event, so every hour, and after each run of this
+# workflow, main's head gets build-and-deploy if no run has started for it.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+  schedule:
+    - cron: "41 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  enable:
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Turn auto-merge off after a push that is not Dependabot's
+        if: github.actor != 'dependabot[bot]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          gh pr merge --disable-auto "$PR_URL" || true
+          echo "::warning::$ACTOR pushed to this Dependabot PR: left for a person"
+
+      - name: Read the update's metadata
+        if: github.actor == 'dependabot[bot]'
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ github.token }}
+
+      - name: Enable auto-merge for a minor or patch update
+        if: >-
+          github.actor == 'dependabot[bot]' &&
+          (steps.meta.outputs.update-type == 'version-update:semver-minor' ||
+           steps.meta.outputs.update-type == 'version-update:semver-patch')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash --delete-branch "$PR_URL"
+
+  deploy-main:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Start build-and-deploy for main's head if nothing has
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          head=$(gh api "repos/$REPO/commits/main" --jq .sha)
+          runs=$(gh run list --repo "$REPO" --workflow build-and-deploy.yml --commit "$head" --json databaseId --jq length)
+          if [ "$runs" != "0" ]; then echo "main $head already has a build-and-deploy run"; exit 0; fi
+          gh workflow run build-and-deploy.yml --repo "$REPO" --ref main
+          echo "started build-and-deploy for main $head"

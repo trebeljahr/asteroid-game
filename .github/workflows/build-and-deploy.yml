@@ -4,8 +4,9 @@ on:
   push:
     branches:
       - main
-  # dependency-updates.yml starts it after merging a Dependabot PR: a merge
-  # made with GITHUB_TOKEN does not trigger the push event.
+  # dependabot-auto-merge.yml starts it when main's head has no run: a merge
+  # GitHub makes for auto-merge enabled with GITHUB_TOKEN may not trigger the
+  # push event.
   workflow_dispatch:
 
 concurrency:
@@ -18,52 +19,9 @@ permissions:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: mirror.gcr.io/library/postgres:16-alpine
-        env:
-          POSTGRES_USER: asteroid_ci
-          POSTGRES_PASSWORD: asteroid_ci
-          POSTGRES_DB: asteroid_ci
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U asteroid_ci"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v6
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.33.2
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Typecheck
-        run: pnpm run check
-
-      - name: Lint
-        run: pnpm exec biome check --diagnostic-level=error .
-
-      - name: Runtime and match handoff tests
-        env:
-          TEST_DATABASE_URL: postgres://asteroid_ci:asteroid_ci@127.0.0.1:5432/asteroid_ci
-        run: pnpm run test:runtime-security && pnpm run test:server
-
-      - name: Client tests
-        run: pnpm run test:client
+    uses: ./.github/workflows/verify.yml
+    permissions:
+      contents: read
 
   # The web client is a static Vite build served by the Cloudflare Worker
   # asteroid-game-client on the route asteroids.trebeljahr.com/*. /trpc/*,
