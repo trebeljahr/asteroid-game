@@ -18,6 +18,16 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      # 0.x packages: a "minor" bump is a breaking release under semver, and
+      # matter-js runs the game's physics, which no test fully pins.
+      - dependency-name: "matter-js"
+        update-types: ["version-update:semver-minor"]
+      - dependency-name: "@types/matter-js"
+        update-types: ["version-update:semver-minor"]
+      # Biome minors change its config schema and rules; they need
+      # `biome migrate` and a lint pass by a person.
+      - dependency-name: "@biomejs/biome"
+        update-types: ["version-update:semver-minor"]
     groups:
       npm-minor-patch:
         applies-to: version-updates
