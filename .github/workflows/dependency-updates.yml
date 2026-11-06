@@ -1,0 +1,125 @@
+name: dependency-updates
+
+# Lands Dependabot's grouped minor/patch and security PRs (see
+# .github/dependabot.yml): runs the same checks as the push pipeline on the PR,
+# squash-merges it, and starts build-and-deploy on main. A merge made with
+# GITHUB_TOKEN does not trigger push workflows, so the deploy is started
+# explicitly. One PR per run; the next run takes the next one after Dependabot
+# rebases it.
+#
+# Never lands: a major update, an ungrouped PR, a PR with a commit that is not
+# Dependabot's, or a PR whose checks fail. Those stay open for a person.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: dependency-updates
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  pick:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      number: ${{ steps.pick.outputs.number }}
+      sha: ${{ steps.pick.outputs.sha }}
+    steps:
+      - name: Pick the oldest grouped Dependabot PR
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          pr=$(gh pr list --repo "$REPO" --state open --author app/dependabot --base main \
+                 --json number,headRefName,headRefOid,createdAt \
+                 --jq '[.[] | select(.headRefName | test("^dependabot/npm_and_yarn/npm-(minor-patch|security)-"))] | sort_by(.createdAt) | first // empty')
+          if [ -z "$pr" ]; then echo "no grouped Dependabot PR is open"; exit 0; fi
+          number=$(jq -r .number <<<"$pr"); sha=$(jq -r .headRefOid <<<"$pr")
+          others=$(gh pr view "$number" --repo "$REPO" --json commits \
+                     --jq '[.commits[].authors[].login | select(. != "dependabot[bot]")] | length')
+          if [ "$others" != "0" ]; then
+            echo "::warning::PR #$number has commits that are not Dependabot's: left for a person"; exit 0
+          fi
+          echo "PR #$number at $sha"
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: [pick]
+    if: needs.pick.outputs.number != ''
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16-alpine
+        env:
+          POSTGRES_USER: asteroid_ci
+          POSTGRES_PASSWORD: asteroid_ci
+          POSTGRES_DB: asteroid_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U asteroid_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - name: Check out the PR
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.pick.outputs.sha }}
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run check
+
+      - name: Lint
+        run: pnpm exec biome check --diagnostic-level=error .
+
+      - name: Runtime and match handoff tests
+        env:
+          TEST_DATABASE_URL: postgres://asteroid_ci:asteroid_ci@127.0.0.1:5432/asteroid_ci
+        run: pnpm run test:runtime-security && pnpm run test:server
+
+      - name: Client tests
+        run: pnpm run test:client
+
+  land:
+    needs: [pick, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - name: Squash-merge the tested commit and deploy main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ needs.pick.outputs.number }}
+          SHA: ${{ needs.pick.outputs.sha }}
+        run: |
+          # --match-head-commit refuses if Dependabot pushed again after the tests.
+          gh pr merge "$NUMBER" --repo "$REPO" --squash --delete-branch --match-head-commit "$SHA"
+          gh workflow run build-and-deploy.yml --repo "$REPO" --ref main
+          echo "merged #$NUMBER and started build-and-deploy on main"
