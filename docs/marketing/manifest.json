@@ -1,0 +1,76 @@
+{
+  "files": [
+    {
+      "path": "screenshots/duel.jpg",
+      "width": 3200,
+      "height": 2000,
+      "bytes": 313391,
+      "sha256": "e0e363b0aeb216f51cda8a565a9135b9f05c132a132ac6331966087568a538dc",
+      "made": "2026-11-06",
+      "source": "scripts/marketing/capture-screenshots.mjs (local client and game server, seeded singleplayer; singleplayer.jpg and duel.jpg picked from --burst frames)"
+    },
+    {
+      "path": "screenshots/flight.gif",
+      "width": 560,
+      "height": 350,
+      "bytes": 1347892,
+      "sha256": "9c137183c5632e646fa60dcae20648df6a020def5e96fc06875076f5063d920c",
+      "made": "2026-11-06",
+      "source": "scripts/marketing/capture-screenshots.mjs (local client and game server, seeded singleplayer; singleplayer.jpg and duel.jpg picked from --burst frames)"
+    },
+    {
+      "path": "screenshots/menu-ships.jpg",
+      "width": 3200,
+      "height": 2000,
+      "bytes": 180269,
+      "sha256": "1890b4e5c45db382da39dfaf9ffebe216fd4c68d7e1681993f5583e18052ffa8",
+      "made": "2026-11-06",
+      "source": "scripts/marketing/capture-screenshots.mjs (local client and game server, seeded singleplayer; singleplayer.jpg and duel.jpg picked from --burst frames)"
+    },
+    {
+      "path": "screenshots/phone-landscape.jpg",
+      "width": 2532,
+      "height": 1170,
+      "bytes": 308437,
+      "sha256": "813cd592ab65af4f6741197e0bf8313194087eb9479f36587ea3cdfbb99c5029",
+      "made": "2026-11-06",
+      "source": "scripts/marketing/capture-screenshots.mjs (local client and game server, seeded singleplayer; singleplayer.jpg and duel.jpg picked from --burst frames)"
+    },
+    {
+      "path": "screenshots/singleplayer.jpg",
+      "width": 3200,
+      "height": 2000,
+      "bytes": 337721,
+      "sha256": "b4df2bbdbf0967a895a3ae62d2d7523f66421d8081bf5ffb0579dff53352b6dd",
+      "made": "2026-11-06",
+      "source": "scripts/marketing/capture-screenshots.mjs (local client and game server, seeded singleplayer; singleplayer.jpg and duel.jpg picked from --burst frames)"
+    },
+    {
+      "path": "social-preview/social-preview-a.png",
+      "width": 1280,
+      "height": 640,
+      "bytes": 685358,
+      "sha256": "c400a72b59fc96aa0688b3f7dc4515b99ed31ce2bdd8b3cb5a8dec980b727c87",
+      "made": "2026-11-06",
+      "source": "scripts/marketing/render-social-preview.mjs from social-preview/template.html"
+    },
+    {
+      "path": "social-preview/social-preview-b.png",
+      "width": 1280,
+      "height": 640,
+      "bytes": 430401,
+      "sha256": "550bcb180cb782af6397ef5442db9566a3036486b86fd8d61279e3662b5b1d48",
+      "made": "2026-11-06",
+      "source": "scripts/marketing/render-social-preview.mjs from social-preview/template.html"
+    },
+    {
+      "path": "social-preview/social-preview-c.png",
+      "width": 1280,
+      "height": 640,
+      "bytes": 601528,
+      "sha256": "f32af3c98e4b16261dfe12a70757c0ae0e54bb7ec34dcccbbc8a246a3268ff23",
+      "made": "2026-11-06",
+      "source": "scripts/marketing/render-social-preview.mjs from social-preview/template.html"
+    }
+  ]
+}

@@ -1,0 +1,299 @@
+<!doctype html>
+<!--
+  GitHub social preview cards for Asteroids, 1280x640.
+  Open with ?v=a, ?v=b or ?v=c; scripts/marketing/render-social-preview.mjs
+  renders all three to PNG. Type is Trebuchet MS, the game's own menu font
+  (a macOS / Windows system font). Images come from ../screenshots/ and the
+  game's ship drawings in client/public/assets/alternatives/.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Asteroids social preview</title>
+    <style>
+      :root {
+        --space-1: #12335c;
+        --space-2: #061426;
+        --space-3: #010611;
+        --ink: #f8fafc;
+        --sky: #bae6fd;
+        --cyan: #7dd3fc;
+        --orange: #fb923c;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      html,
+      body {
+        width: 1280px;
+        height: 640px;
+        overflow: hidden;
+        background: var(--space-3);
+      }
+      body {
+        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+        color: var(--ink);
+      }
+      .card {
+        position: relative;
+        width: 1280px;
+        height: 640px;
+        overflow: hidden;
+        display: none;
+      }
+      .card.on {
+        display: block;
+      }
+      .wordmark {
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        line-height: 1;
+      }
+      .url {
+        font-size: 24px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        color: var(--cyan);
+      }
+
+      /* A: the singleplayer screenshot, text on a darkened left side */
+      #a .shot {
+        position: absolute;
+        inset: 0;
+        background: url("../screenshots/singleplayer.jpg") no-repeat;
+        background-size: 1500px auto;
+        background-position: 78px -165px;
+      }
+      #a .shade {
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(90deg, rgba(1, 6, 17, 0.97) 0%, rgba(1, 6, 17, 0.92) 38%, rgba(1, 6, 17, 0) 64%);
+      }
+      #a .text {
+        position: absolute;
+        left: 72px;
+        top: 168px;
+        width: 520px;
+      }
+      #a .wordmark {
+        font-size: 88px;
+      }
+      #a .line {
+        margin-top: 28px;
+        font-size: 33px;
+        line-height: 1.28;
+        color: var(--sky);
+      }
+      #a .url {
+        margin-top: 40px;
+      }
+
+      /* B: type on the game's space gradient, with its six ships */
+      #b {
+        background:
+          radial-gradient(ellipse at 50% 38%, var(--space-1) 0%, var(--space-2) 55%, var(--space-3) 100%);
+      }
+      #b .stars span {
+        position: absolute;
+        width: 3px;
+        height: 3px;
+        border-radius: 50%;
+        background: #e0f2fe;
+        opacity: 0.7;
+      }
+      #b .text {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 92px;
+        text-align: center;
+      }
+      #b .wordmark {
+        font-size: 124px;
+      }
+      #b .line {
+        margin-top: 26px;
+        font-size: 32px;
+        color: var(--sky);
+      }
+      #b .ships {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 352px;
+        display: flex;
+        justify-content: center;
+        gap: 54px;
+      }
+      #b .ships img {
+        height: 150px;
+        filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.5));
+      }
+      #b .ships img:nth-child(odd) {
+        transform: translateY(-14px);
+      }
+      #b .url {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 64px;
+        text-align: center;
+      }
+
+      /* C: three framed captures, one per way to play */
+      #c {
+        background:
+          radial-gradient(ellipse at 80% 0%, rgba(125, 211, 252, 0.16), transparent 50%),
+          radial-gradient(ellipse at 0% 100%, rgba(251, 146, 60, 0.14), transparent 45%),
+          var(--space-3);
+      }
+      #c .head {
+        position: absolute;
+        left: 64px;
+        right: 64px;
+        top: 64px;
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+      }
+      #c .wordmark {
+        font-size: 72px;
+      }
+      #c .line {
+        position: absolute;
+        left: 64px;
+        top: 152px;
+        font-size: 29px;
+        color: var(--sky);
+      }
+      #c .row {
+        position: absolute;
+        left: 64px;
+        right: 64px;
+        top: 236px;
+        display: flex;
+        gap: 24px;
+      }
+      #c figure {
+        width: 368px;
+      }
+      #c .frame {
+        width: 368px;
+        height: 276px;
+        border-radius: 16px;
+        border: 2px solid rgba(125, 211, 252, 0.35);
+        background-repeat: no-repeat;
+        box-shadow: 0 24px 50px -12px rgba(0, 0, 0, 0.7);
+      }
+      #c figcaption {
+        margin-top: 18px;
+        font-size: 24px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        text-align: center;
+        color: var(--ink);
+      }
+      #c .solo {
+        background-image: url("../screenshots/singleplayer.jpg");
+        background-size: 640px auto;
+        background-position: -150px -60px;
+      }
+      #c .duel {
+        background-image: url("../screenshots/duel.jpg");
+        background-size: 640px auto;
+        background-position: -140px -60px;
+      }
+      #c .phone {
+        background-image: url("../screenshots/phone-landscape.jpg");
+        background-size: auto 276px;
+        background-position: 0 0;
+      }
+    </style>
+  </head>
+  <body>
+    <section class="card" id="a">
+      <div class="shot"></div>
+      <div class="shade"></div>
+      <div class="text">
+        <h1 class="wordmark">Asteroids</h1>
+        <p class="line">Fly through asteroid fields in your browser, alone or against other players.</p>
+        <p class="url">asteroids.trebeljahr.com</p>
+      </div>
+    </section>
+
+    <section class="card" id="b">
+      <div class="stars" aria-hidden="true"></div>
+      <div class="text">
+        <h1 class="wordmark">Asteroids</h1>
+        <p class="line">Solo runs, 1v1 duels and a 20-ship battle royale, in the browser.</p>
+      </div>
+      <div class="ships">
+        <img src="../../../client/public/assets/alternatives/ship-alt-aurora-sprint.svg" alt="" />
+        <img src="../../../client/public/assets/alternatives/ship-alt-comet-lance.svg" alt="" />
+        <img src="../../../client/public/assets/alternatives/ship-alt-ember-needle.svg" alt="" />
+        <img src="../../../client/public/assets/alternatives/ship-alt-orbit-dart.svg" alt="" />
+        <img src="../../../client/public/assets/alternatives/ship-alt-solar-sloop.svg" alt="" />
+        <img src="../../../client/public/assets/alternatives/ship-alt-starfin-drifter.svg" alt="" />
+      </div>
+      <p class="url">asteroids.trebeljahr.com</p>
+    </section>
+
+    <section class="card" id="c">
+      <div class="head">
+        <h1 class="wordmark">Asteroids</h1>
+        <p class="url">asteroids.trebeljahr.com</p>
+      </div>
+      <p class="line">An arcade game you play in the browser, on a computer or a phone.</p>
+      <div class="row">
+        <figure><div class="frame solo"></div><figcaption>Solo run</figcaption></figure>
+        <figure><div class="frame duel"></div><figcaption>1v1 duel</figcaption></figure>
+        <figure><div class="frame phone"></div><figcaption>On a phone</figcaption></figure>
+      </div>
+    </section>
+
+    <script>
+      const variant = new URLSearchParams(location.search).get("v") || "a";
+      document.getElementById(variant).classList.add("on");
+
+      // A fixed scatter of stars, the same on every render.
+      const stars = document.querySelector("#b .stars");
+      let seed = 11;
+      const rand = () => {
+        seed = (seed * 16807) % 2147483647;
+        return seed / 2147483647;
+      };
+      for (let i = 0; i < 70; i++) {
+        const star = document.createElement("span");
+        star.style.left = `${Math.round(rand() * 1280)}px`;
+        star.style.top = `${Math.round(rand() * 640)}px`;
+        star.style.opacity = (0.25 + rand() * 0.6).toFixed(2);
+        stars.appendChild(star);
+      }
+
+      Promise.all(
+        [...document.querySelectorAll(".card.on img")].map((img) => img.decode()),
+      ).then(async () => {
+        const urls = [...document.querySelectorAll(".card.on *")]
+          .map((el) => getComputedStyle(el).backgroundImage)
+          .filter((value) => value.startsWith("url("))
+          .map((value) => value.slice(5, -2));
+        await Promise.all(
+          urls.map(
+            (url) =>
+              new Promise((resolve) => {
+                const image = new Image();
+                image.onload = resolve;
+                image.onerror = resolve;
+                image.src = url;
+              }),
+          ),
+        );
+        await document.fonts.ready;
+        document.body.dataset.ready = "1";
+      });
+    </script>
+  </body>
+</html>
