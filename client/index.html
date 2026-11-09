@@ -47,6 +47,26 @@
     <meta name="twitter:image" content="https://asteroids.trebeljahr.com/og-image.png" />
     <meta name="twitter:image:alt" content="Asteroids arcade space shooter preview" />
     <title>Asteroids | Arcade Space Shooter</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "VideoGame",
+        "name": "Asteroids",
+        "description": "Fly through asteroid fields in your browser: race the clock alone, duel one player, or fight up to 19 others.",
+        "url": "https://asteroids.trebeljahr.com/",
+        "image": "https://asteroids.trebeljahr.com/og-image.png",
+        "genre": ["Arcade", "Space shooter"],
+        "gamePlatform": "Web browser",
+        "playMode": ["SinglePlayer", "MultiPlayer"],
+        "numberOfPlayers": { "@type": "QuantitativeValue", "minValue": 1, "maxValue": 20 },
+        "applicationCategory": "Game",
+        "inLanguage": "en",
+        "isAccessibleForFree": true,
+        "author": { "@type": "Person", "name": "Rico Trebeljahr", "url": "https://ricos.site" },
+        "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+        "sameAs": ["https://github.com/trebeljahr/asteroid-game"]
+      }
+    </script>
     <script>
       (() => {
         var domain = "asteroids.trebeljahr.com";
@@ -225,7 +245,13 @@
       class="backgroundImage"
       alt="galaxy background"
     />
-    <div id="menu" class="menuRoot"></div>
+    <!-- Static heading for crawlers that read the raw HTML; React's first
+         render replaces it with the menu and its own h1. -->
+    <div id="menu" class="menuRoot">
+      <h1 style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap">
+        Asteroids
+      </h1>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
