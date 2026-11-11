@@ -94,7 +94,7 @@ These files are not covered by the AGPL:
 - **Heart** (`client/public/assets/heart.svg`, `heart.png`): from [Openclipart](https://openclipart.org), released into the public domain.
 - **Rocket** (`client/public/assets/rocket.svg`, `rocket.png`, not used by the game): image 297573 from [Pixabay](https://pixabay.com), under the Pixabay Content License.
 - **Background photo** (`client/public/assets/background.jpg`, the night sky behind the game): its source is not recorded, so no licence is offered for it here.
-- **Images made for this project** (the six ships in `client/public/assets/alternatives/`, the favicons, app icons and preview images such as `og-image.png` and `null-vector-thumbnail.svg`, and the screenshots and cards in `docs/marketing/`): © Rico Trebeljahr, all rights reserved. Third-party art inside them keeps its own terms.
+- **Images made for this project** (the six ships in `client/public/assets/alternatives/`, the favicons, app icons and preview images such as `og-card.jpg` and `null-vector-thumbnail.svg`, and the screenshots and cards in `docs/marketing/`): © Rico Trebeljahr, all rights reserved. Third-party art inside them keeps its own terms.
 
 No fonts are bundled. The game uses the fonts on your system.
 

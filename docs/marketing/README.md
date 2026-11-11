@@ -49,6 +49,8 @@ down to exactly 1200×630 with ImageMagick.
 | File | Shows |
 | --- | --- |
 | `social-preview/og-wordmark.png` | Card A with wordmark and line on the darkened left side, without the URL. |
+
+`og-wordmark.png` is also the site's og:image, as `client/public/og-card.jpg` (JPEG, quality 88, 4:4:4): `magick docs/marketing/social-preview/og-wordmark.png -strip -sampling-factor 4:4:4 -interlace JPEG -quality 88 client/public/og-card.jpg`.
 | `social-preview/og-clean.png` | No text: the singleplayer capture reframed so the ship sits right of centre and the HUD falls outside. |
 
 ## Rebuilding
