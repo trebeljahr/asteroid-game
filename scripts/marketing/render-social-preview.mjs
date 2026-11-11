@@ -2,7 +2,7 @@
 // docs/marketing/social-preview/template.html, one per variant, and the two
 // og:image cards (1200x630 PNG) from variant A:
 //
-//   og-wordmark.png  card A with its wordmark, line and URL, laid out at 1.91:1
+//   og-wordmark.png  card A with its wordmark and line (no URL), laid out at 1.91:1
 //   og-clean.png     card A without shade or text, the screenshot reframed
 //
 //   node scripts/marketing/render-social-preview.mjs        # all five
@@ -40,10 +40,14 @@ const ogOnly = process.argv.includes("--og");
 const ogTall = "html, body, .card { height: 672px !important; }";
 const ogCards = {
   // Live A: screenshot shifted right, text on a dark left shade. The extra
-  // 32 px go half above, half below: the shot moves up 16 px, the text down 16.
+  // 32 px go half above, half below: the shot moves up 16 px. The URL line is
+  // left out; the wordmark and line (243 px) keep the centre the three-line
+  // block had (y 339), so the text starts at 218. At that height the shot
+  // moves 60 px further right, so the grey asteroid clears the wordmark.
   "og-wordmark": `
-    #a .shot { background-position: 78px -149px !important; }
-    #a .text { top: 184px !important; }
+    #a .shot { background-position: 138px -149px !important; }
+    #a .url { display: none !important; }
+    #a .text { top: 218px !important; }
   `,
   // Shade and text gone; the full-bleed shot reframed so the ship sits a little
   // right of centre and the HUD (hearts, route panel, mode label) and a

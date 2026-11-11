@@ -48,7 +48,7 @@ down to exactly 1200×630 with ImageMagick.
 
 | File | Shows |
 | --- | --- |
-| `social-preview/og-wordmark.png` | Card A with wordmark, line and URL on the darkened left side. |
+| `social-preview/og-wordmark.png` | Card A with wordmark and line on the darkened left side, without the URL. |
 | `social-preview/og-clean.png` | No text: the singleplayer capture reframed so the ship sits right of centre and the HUD falls outside. |
 
 ## Rebuilding
