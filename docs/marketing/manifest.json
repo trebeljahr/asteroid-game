@@ -46,6 +46,24 @@
       "source": "scripts/marketing/capture-screenshots.mjs (local client and game server, seeded singleplayer; singleplayer.jpg and duel.jpg picked from --burst frames)"
     },
     {
+      "path": "social-preview/og-clean.png",
+      "width": 1200,
+      "height": 630,
+      "bytes": 714657,
+      "sha256": "800ecea8c23a6228cd43aea53261b11022ab366ca7b092ae5aad7caba8ee5683",
+      "made": "2026-11-11",
+      "source": "scripts/marketing/render-social-preview.mjs from social-preview/template.html"
+    },
+    {
+      "path": "social-preview/og-wordmark.png",
+      "width": 1200,
+      "height": 630,
+      "bytes": 651570,
+      "sha256": "d2db61b8cc43f1511eabb688f27dd808d4808dd16bbbc70760d87917e50a4825",
+      "made": "2026-11-11",
+      "source": "scripts/marketing/render-social-preview.mjs from social-preview/template.html"
+    },
+    {
       "path": "social-preview/social-preview-a.png",
       "width": 1280,
       "height": 640,

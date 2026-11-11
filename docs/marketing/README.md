@@ -40,12 +40,24 @@ from `social-preview/template.html` with Trebuchet MS, the game's menu font.
 
 None is uploaded to GitHub yet; the repository owner picks one.
 
+## og:image cards
+
+1200×630 PNG, the Open Graph size, built from card A of the same template. The
+card is laid out at 1280×672 (the same 1.91:1 shape), shot at 2× and scaled
+down to exactly 1200×630 with ImageMagick.
+
+| File | Shows |
+| --- | --- |
+| `social-preview/og-wordmark.png` | Card A with wordmark, line and URL on the darkened left side. |
+| `social-preview/og-clean.png` | No text: the singleplayer capture reframed so the ship sits right of centre and the HUD falls outside. |
+
 ## Rebuilding
 
 Both scripts need Playwright with a Chromium. It is not a dependency of this
 repo: install it globally, or point `PLAYWRIGHT_MODULE` at any Playwright
 package folder and, if its own browser is missing, `CHROMIUM_PATH` at a
-Chromium binary. `--gif` also needs ffmpeg.
+Chromium binary. `--gif` also needs ffmpeg; the og:image cards need
+ImageMagick (`magick`).
 
 ```bash
 # 1. Game server and client on free ports (no Docker needed).
@@ -59,6 +71,8 @@ BASE_URL=http://127.0.0.1:<web port> pnpm marketing:screenshots -- --burst=6 --g
 # 3. Cards into docs/marketing/social-preview/, and manifest.json.
 #    REVIEW_DIR=<folder> also writes copies and a labelled review-sheet.jpg there.
 pnpm marketing:social-preview
+# Only the two og:image cards (leaves the 1280x640 cards alone):
+pnpm marketing:social-preview --og
 ```
 
 Card A and C place the screenshots with fixed `background-position` values.
