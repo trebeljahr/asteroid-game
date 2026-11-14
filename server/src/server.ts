@@ -112,8 +112,10 @@ app.get("/health", (_request, response) => {
 if (existsSync(clientDistPath)) {
   app.use(express.static(clientDistPath));
 
-  app.get("*", (_request, response) => {
-    response.sendFile(path.join(clientDistPath, "index.html"));
+  // Express 5's send refuses absolute paths with a dot segment (such as a
+  // checkout under .claude/), so name the file relative to its root.
+  app.get("/{*path}", (_request, response) => {
+    response.sendFile("index.html", { root: clientDistPath });
   });
 } else {
   app.get("/", (_request, response) => {
