@@ -27,7 +27,14 @@ if (dsn) {
     dsn,
     release: releaseName(APP_VERSION, process.env.COMMIT_SHA ?? ""),
     environment: process.env.SENTRY_ENVIRONMENT || process.env.NODE_ENV || "development",
-    sendDefaultPii: false,
+    // Sentry 11 has no sendDefaultPii; its dataCollection defaults collect
+    // user info, cookies, headers and bodies. All off.
+    dataCollection: {
+      userInfo: false,
+      cookies: false,
+      httpHeaders: false,
+      httpBodies: [],
+    },
     sendClientReports: false,
     defaultIntegrations: false,
     integrations: [

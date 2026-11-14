@@ -202,7 +202,12 @@ describe("createErrorReporter", () => {
     assert.equal(inits.length, 1);
     const config = inits[0] ?? {};
     assert.equal(config.tunnel, "https://asteroids.example.com/trpc/client-errors");
-    assert.equal(config.sendDefaultPii, false);
+    assert.deepEqual(config.dataCollection, {
+      userInfo: false,
+      cookies: false,
+      httpHeaders: false,
+      httpBodies: [],
+    });
     assert.equal(config.defaultIntegrations, false);
     assert.equal(config.maxBreadcrumbs, 0);
     assert.equal(config.release, "asteroid-game@1.0.0+abc");

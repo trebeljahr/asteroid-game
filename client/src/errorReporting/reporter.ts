@@ -70,7 +70,14 @@ export function createErrorReporter(options: ErrorReporterOptions): () => Promis
           tunnel: options.tunnel,
           release: options.release,
           environment: options.environment,
-          sendDefaultPii: false,
+          // Sentry 11 has no sendDefaultPii; its dataCollection defaults
+          // collect user info, cookies, headers and bodies. All off.
+          dataCollection: {
+            userInfo: false,
+            cookies: false,
+            httpHeaders: false,
+            httpBodies: [],
+          },
           sendClientReports: false,
           // No tracing: no tracesSampleRate and no browserTracingIntegration.
           // The list replaces the SDK defaults, leaving out the session
