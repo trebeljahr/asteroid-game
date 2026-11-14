@@ -51,7 +51,7 @@
     "@biomejs/biome": "^2.5.15",
     "concurrently": "^10.0.7",
     "husky": "^9.1.7",
-    "lint-staged": "^16.4.0",
+    "lint-staged": "^17.6.0",
     "tsx": "^4.23.15"
   },
   "lint-staged": {
