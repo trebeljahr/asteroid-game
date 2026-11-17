@@ -1,7 +1,8 @@
 import type p5 from "p5";
-import type { Vector } from "p5";
 import { assets } from "./sketch";
 import { randomSpawnPoint } from "./utils";
+
+type Vector = p5.Vector;
 
 export let ammunition = {} as AmmunitionPackages;
 

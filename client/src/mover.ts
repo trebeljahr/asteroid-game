@@ -1,6 +1,7 @@
 import type p5 from "p5";
-import type { Vector } from "p5";
 import { boardSizeX, boardSizeY, height, width } from "./utils";
+
+type Vector = p5.Vector;
 
 export class Mover {
   p: p5;

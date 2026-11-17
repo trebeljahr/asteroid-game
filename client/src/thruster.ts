@@ -1,6 +1,8 @@
-import p5, { type Vector } from "p5";
+import p5 from "p5";
 import { Mover } from "./mover";
 import { rgba } from "./utils";
+
+type Vector = p5.Vector;
 
 export class ThrusterExhaustSystem {
   p: p5;

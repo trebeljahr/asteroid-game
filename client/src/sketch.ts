@@ -1,5 +1,5 @@
 import { Engine } from "matter-js";
-import p5, { type Image } from "p5";
+import p5 from "p5";
 import { MULTIPLAYER_SHIP_VARIANTS, type ShipVariant } from "../../shared/src";
 import { getOrCreateDeviceToken, setAccountBootstrap, setAccountOffline } from "./account";
 import { initAudio, setAudioEnabled } from "./audio";
@@ -14,6 +14,8 @@ import { initializeMultiplayerSession } from "./multiplayerSession";
 import { refreshRunViewport } from "./runMode";
 import { trpcClient } from "./trpcClient";
 import { ESC_KEYCODE, height, updateWindowSize, width } from "./utils";
+
+type Image = p5.Image;
 
 const MIN_SPLASH_DURATION_MS = 1000;
 const ASTEROID_TEXTURE_SIZE = 512;
@@ -51,8 +53,8 @@ const releaseGraphicsBuffer = (graphics: p5.Graphics) => {
 const rasterizeImageAsset = (p: p5, source: Image, size: number) => {
   const graphics = p.createGraphics(size, size);
   graphics.clear();
-  graphics.imageMode(graphics.CENTER);
-  graphics.image(source, size / 2, size / 2, size, size);
+  // Corner mode: p5 2 graphics buffers have no CENTER constant.
+  graphics.image(source, 0, 0, size, size);
   const rasterized = graphics.get();
   releaseGraphicsBuffer(graphics);
   return rasterized;
@@ -109,19 +111,24 @@ const sketch = (p: p5) => {
     }
   };
 
-  p.preload = () => {
-    const asteroid1 = p.loadImage("/assets/asteroid1.png");
-    const asteroid2 = p.loadImage("/assets/asteroid2.png");
-    const asteroid3 = p.loadImage("/assets/asteroid3.png");
-    const heart = p.loadImage("/assets/heart.png");
-    const space = p.loadImage("/assets/background.jpg");
+  // p5 2 has no preload: setup is async and draw waits for it.
+  const loadAssets = async () => {
+    const [asteroid1, asteroid2, asteroid3, heart, space, ammoAsset, ...shipImages] =
+      await Promise.all([
+        p.loadImage("/assets/asteroid1.png"),
+        p.loadImage("/assets/asteroid2.png"),
+        p.loadImage("/assets/asteroid3.png"),
+        p.loadImage("/assets/heart.png"),
+        p.loadImage("/assets/background.jpg"),
+        p.loadImage("/assets/bullets.png"),
+        ...MULTIPLAYER_SHIP_VARIANTS.map((variant) =>
+          p.loadImage(`/assets/alternatives/ship-alt-${variant}.png`),
+        ),
+      ]);
 
-    const multiplayerShips: Partial<Record<ShipVariant, Image>> = {};
-    for (const variant of MULTIPLAYER_SHIP_VARIANTS) {
-      multiplayerShips[variant] = p.loadImage(`/assets/alternatives/ship-alt-${variant}.png`);
-    }
-
-    const ammoAsset = p.loadImage("/assets/bullets.png");
+    const multiplayerShips = Object.fromEntries(
+      MULTIPLAYER_SHIP_VARIANTS.map((variant, index) => [variant, shipImages[index]]),
+    ) as Record<ShipVariant, Image>;
 
     const initialState = getGameState();
 
@@ -129,12 +136,13 @@ const sketch = (p: p5) => {
       asteroids: [asteroid1, asteroid2, asteroid3],
       heart,
       space,
-      multiplayerShips: multiplayerShips as Record<ShipVariant, Image>,
-      runShip: multiplayerShips[initialState.settings.shipVariant]!,
+      multiplayerShips,
+      runShip: multiplayerShips[initialState.settings.shipVariant],
       ammoAsset,
     };
   };
-  p.setup = () => {
+  p.setup = async () => {
+    await loadAssets();
     const renderer = p.createCanvas(width, height);
     assets.asteroids = [
       rasterizeImageAsset(p, assets.asteroids[0], ASTEROID_TEXTURE_SIZE),

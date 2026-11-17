@@ -1,5 +1,4 @@
 import type p5 from "p5";
-import type { Image, Vector } from "p5";
 import { v4 } from "uuid";
 import {
   ASTEROID_COLLISION_SHAPES,
@@ -21,6 +20,9 @@ import {
   distanceToSegmentSquare,
   distSquare,
 } from "./utils";
+
+type Image = p5.Image;
+type Vector = p5.Vector;
 
 interface SpawnPoint {
   x: number;

@@ -1,5 +1,6 @@
 import type p5 from "p5";
-import type { Vector } from "p5";
+
+type Vector = p5.Vector;
 
 const collidePointPoly = (px: number, py: number, vertices: Vector[], _p: p5) => {
   let collision = false;

@@ -1,6 +1,8 @@
-import p5, { type Vector } from "p5";
+import p5 from "p5";
 import { Mover } from "./mover";
 import { type CameraBounds, circleIntersectsBounds, rgba } from "./utils";
+
+type Vector = p5.Vector;
 
 export let explosions = {} as ExplosionSystem;
 

@@ -1,4 +1,4 @@
-import p5, { type Vector } from "p5";
+import p5 from "p5";
 import { asteroids } from "./asteroids";
 import { getHudHeartCenter, getHudHeartSize } from "./healthHud";
 import { assets } from "./sketch";
@@ -10,6 +10,8 @@ import {
   randomSpawnPoint,
   width,
 } from "./utils";
+
+type Vector = p5.Vector;
 
 interface CollectHeartEffect {
   age: number;

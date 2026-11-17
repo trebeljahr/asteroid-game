@@ -1,4 +1,4 @@
-import p5, { type Vector } from "p5";
+import p5 from "p5";
 import { reportAchievementEvent } from "./achievementEvents";
 import { playSound } from "./audio";
 import { showSingleplayerVictory } from "./gameUiActions";
@@ -11,6 +11,8 @@ import {
   clamp,
   distSquare,
 } from "./utils";
+
+type Vector = p5.Vector;
 
 interface GoalLeg {
   distance: number;
