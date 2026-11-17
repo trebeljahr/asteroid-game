@@ -40,8 +40,8 @@ importers:
         specifier: ^11.25.2
         version: 11.28.3(@trpc/server@11.28.3(@types/express@5.0.6)(@types/ws@8.18.2)(typescript@7.0.2))(typescript@7.0.2)
       matter-js:
-        specifier: ^0.14.2
-        version: 0.14.2
+        specifier: ^0.20.0
+        version: 0.20.0
       p5:
         specifier: ^1.11.13
         version: 1.11.13
@@ -65,8 +65,8 @@ importers:
         version: 14.0.3
     devDependencies:
       '@types/matter-js':
-        specifier: ^0.14.12
-        version: 0.14.12
+        specifier: ^0.20.2
+        version: 0.20.2
       '@types/p5':
         specifier: ^0.9.1
         version: 0.9.1
@@ -1798,8 +1798,8 @@ packages:
   '@types/http-errors@2.0.5':
     resolution: {integrity: sha512-r8Tayk8HJnX0FztbZN7oVqGccWgw98T/0neJphO91KkmOzug1KkofZURD4UaD5uH8AqcFLfdPErnBod0u71/qg==}
 
-  '@types/matter-js@0.14.12':
-    resolution: {integrity: sha512-n3+rv3E4tIW/UOCpi4Dh/4q9kgkk3k/tC4pV/GvsX2DcZ+iuEOAPPsJPyMidHOVaspChBu+FKQoWrbyJ8JPRcQ==}
+  '@types/matter-js@0.20.2':
+    resolution: {integrity: sha512-3PPKy3QxvZ89h9+wdBV2488I1JLVs7DEpIkPvgO8JC1mUdiVSO37ZIvVctOTD7hIq8OAL2gJ3ugGSuUip6DhCw==}
 
   '@types/node@26.6.7':
     resolution: {integrity: sha512-tovuRfrUILu6v46bMG+BgXxMvsqPBx2WO2as8Rpln+JTff1dbexMtAM4KFTejmL0axsnSWViCW7MecUQpLuBRA==}
@@ -2842,8 +2842,8 @@ packages:
     resolution: {integrity: sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==}
     engines: {node: '>= 0.4'}
 
-  matter-js@0.14.2:
-    resolution: {integrity: sha512-3ttVT8cJlQnGRjBa8MyVrGyvGmnmOkZ3YsyemIw+KwEEdVi70mo32FH1Eta2b3GfdDJFbMDRqyMQt4heNKBUEA==}
+  matter-js@0.20.0:
+    resolution: {integrity: sha512-iC9fYR7zVT3HppNnsFsp9XOoQdQN2tUyfaKg4CHLH8bN+j6GT4Gw7IH2rP0tflAebrHFw730RR3DkVSZRX8hwA==}
 
   media-typer@1.1.1:
     resolution: {integrity: sha512-yz3xRaG20c6/BOzvYoDaGtPmGscs7YivItZEEqe6GbwNfHuxu9YNmvnEkMzKldAGY4/80pRcQRZSEnhquk9XuQ==}
@@ -5017,7 +5017,7 @@ snapshots:
 
   '@types/http-errors@2.0.5': {}
 
-  '@types/matter-js@0.14.12': {}
+  '@types/matter-js@0.20.2': {}
 
   '@types/node@26.6.7':
     dependencies:
@@ -6059,7 +6059,7 @@ snapshots:
 
   math-intrinsics@1.1.0: {}
 
-  matter-js@0.14.2: {}
+  matter-js@0.20.0: {}
 
   media-typer@1.1.1: {}
 

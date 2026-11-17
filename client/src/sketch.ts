@@ -13,7 +13,7 @@ import { initializeMobileControls } from "./mobileControls";
 import { initializeMultiplayerSession } from "./multiplayerSession";
 import { refreshRunViewport } from "./runMode";
 import { trpcClient } from "./trpcClient";
-import { boardSizeX, boardSizeY, ESC_KEYCODE, height, updateWindowSize, width } from "./utils";
+import { ESC_KEYCODE, height, updateWindowSize, width } from "./utils";
 
 const MIN_SPLASH_DURATION_MS = 1000;
 const ASTEROID_TEXTURE_SIZE = 512;
@@ -81,10 +81,6 @@ const sketch = (p: p5) => {
   const syncViewport = () => {
     updateWindowSize();
     p.resizeCanvas(width, height);
-    engine.world.bounds.min.x = -boardSizeX;
-    engine.world.bounds.min.y = -boardSizeY;
-    engine.world.bounds.max.x = boardSizeX;
-    engine.world.bounds.max.y = boardSizeY;
 
     const state = getGameState();
     if (state.scene.type === "mode" && state.scene.mode === "singleplayer") {
@@ -150,10 +146,6 @@ const sketch = (p: p5) => {
     initializeMobileControls();
     initializeMultiplayerSession(p);
     engine.world.gravity.y = 0;
-    engine.world.bounds.min.x = -boardSizeX;
-    engine.world.bounds.min.y = -boardSizeY;
-    engine.world.bounds.max.x = boardSizeX;
-    engine.world.bounds.max.y = boardSizeY;
     window.addEventListener("orientationchange", scheduleViewportSync);
 
     gameStateMachine.subscribe((state) => {
