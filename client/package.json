@@ -19,7 +19,7 @@
     "@sentry/browser": "11.11.0",
     "@trpc/client": "^11.25.2",
     "matter-js": "^0.20.0",
-    "p5": "^1.11.13",
+    "p5": "^2.3.4",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "socket.io-client": "^4.8.4",
@@ -29,7 +29,6 @@
   },
   "devDependencies": {
     "@types/matter-js": "^0.20.2",
-    "@types/p5": "^0.9.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "typescript": "^7.0.2",
