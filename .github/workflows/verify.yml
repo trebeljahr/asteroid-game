@@ -3,7 +3,7 @@ name: verify
 # The checks every change to main must pass: typecheck, lint, the runtime and
 # match handoff tests against Postgres, and the client tests. One copy, called
 # by build-and-deploy.yml on every push and by pr-checks.yml on every pull
-# request, so a Dependabot PR is held to the same gate as a push.
+# request. deps-land.yml repeats these steps for the autopilot's branches.
 
 on:
   workflow_call:

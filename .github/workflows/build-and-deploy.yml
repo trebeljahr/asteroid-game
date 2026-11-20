@@ -4,9 +4,8 @@ on:
   push:
     branches:
       - main
-  # dependabot-auto-merge.yml starts it when main's head has no run: a merge
-  # GitHub makes for auto-merge enabled with GITHUB_TOKEN may not trigger the
-  # push event.
+  # deps-land.yml starts it after it fast-forwards main: a push made with
+  # GITHUB_TOKEN starts no push workflows.
   workflow_dispatch:
 
 concurrency:
