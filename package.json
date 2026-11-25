@@ -48,10 +48,10 @@
   "author": "Rico Trebeljahr",
   "license": "AGPL-3.0-or-later",
   "devDependencies": {
-    "@biomejs/biome": "^2.5.15",
+    "@biomejs/biome": "^2.6.9",
     "concurrently": "^10.0.7",
     "husky": "^9.1.7",
-    "lint-staged": "^17.6.0",
+    "lint-staged": "^17.6.2",
     "tsx": "^4.23.15"
   },
   "lint-staged": {
