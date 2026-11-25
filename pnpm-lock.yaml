@@ -37,7 +37,7 @@ importers:
         specifier: 11.11.0
         version: 11.11.0
       '@trpc/client':
-        specifier: ^11.25.2
+        specifier: ^11.28.3
         version: 11.28.3(@trpc/server@11.28.3(@types/express@5.0.6)(@types/ws@8.18.2)(typescript@7.0.2))(typescript@7.0.2)
       matter-js:
         specifier: ^0.20.0
@@ -5870,11 +5870,11 @@ snapshots:
 
   i18next-browser-languagedetector@4.3.1:
     dependencies:
-      '@babel/runtime': 7.29.13
+      '@babel/runtime': 7.29.14
 
   i18next@19.9.2:
     dependencies:
-      '@babel/runtime': 7.29.13
+      '@babel/runtime': 7.29.14
 
   iconv-lite@0.7.3:
     dependencies:

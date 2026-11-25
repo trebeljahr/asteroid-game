@@ -17,7 +17,7 @@
   "license": "AGPL-3.0-or-later",
   "dependencies": {
     "@sentry/browser": "11.11.0",
-    "@trpc/client": "^11.25.2",
+    "@trpc/client": "^11.28.3",
     "matter-js": "^0.20.0",
     "p5": "^2.3.4",
     "react": "^19.3.1",
